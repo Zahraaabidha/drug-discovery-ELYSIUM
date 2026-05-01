@@ -1,0 +1,56 @@
+# =========================
+# Python
+# =========================
+backend/venv/
+**/__pycache__/
+*.pyc
+
+# =========================
+# Node / React
+# =========================
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+# =========================
+# ML / DeepPurpose / Models
+# =========================
+backend/save_folder/
+backend/save_folder/**
+*.pt
+*.pth
+*.bin
+*.h5
+
+# =========================
+# FAISS / Vector indexes
+# =========================
+backend/*.index
+backend/*.npy
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Env / Secrets
+# =========================
+*.env
+.env.*
+backend/.env
+
+# =========================
+# Local Databases
+# =========================
+backend/elysium.db
+backend/elysium.db.bak
+
+# =========================
+# Docker / Logs
+# =========================
+docker-data/
+*.log

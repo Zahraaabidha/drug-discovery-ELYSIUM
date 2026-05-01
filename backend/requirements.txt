@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+DeepPurpose
+pandas
+numpy
+git+https://github.com/bp-kelley/descriptastorus
+sqlalchemy
+rdkit-pypi
+transformers
+torch==2.1.2
+Pillow
+python-arango
+descriptastorus
+setuptools
+wheel
