@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+sqlalchemy
+python-arango
+requests
+Pillow
+numpy==1.26.4
+pandas==2.3.3
+rdkit==2025.9.3

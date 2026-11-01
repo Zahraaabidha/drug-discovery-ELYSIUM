@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import GraphViewer from "../components/GraphViewer";
-import { API_BASE_URL } from "../api/client";
+import { API_BASE_URL, API_KEY } from "../api/client";
 
 const modes = [
   { key: "agent", label: "Agent view", desc: "Highlights high-priority molecules in green, deprioritized in grey" },
@@ -99,7 +99,7 @@ const GraphsHomePage: React.FC = () => {
     setSelectedNode(null);
     try {
       const url = `${API_BASE_URL}/graph-view/target/${encodeURIComponent(activeTarget)}?depth=${depth}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: { "X-API-KEY": API_KEY } });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setNodes(Array.isArray(data?.nodes) ? data.nodes : []);

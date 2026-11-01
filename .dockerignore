@@ -1,0 +1,9 @@
+**/node_modules
+**/venv
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.env
+frontend.zip
+backend/save_folder
+backend/elysium.db*

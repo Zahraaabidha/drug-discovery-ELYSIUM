@@ -1,17 +1,15 @@
-version: "3.9"
-
 services:
   arangodb:
     image: arangodb:3.11
     container_name: elysium_arangodb
     environment:
-      ARANGO_ROOT_PASSWORD: changeme
+      ARANGO_ROOT_PASSWORD: ${ARANGO_PASSWORD:-changeme}
     ports:
       - "8529:8529"
     volumes:
       - arango_data:/var/lib/arangodb3
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8529/_api/version || exit 1"]
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://127.0.0.1:8529/_api/version 2>&1 | grep -q HTTP/"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -22,21 +20,31 @@ services:
       dockerfile: backend/Dockerfile
     container_name: elysium_backend
     depends_on:
-      - arangodb
+      arangodb:
+        condition: service_healthy
     ports:
       - "8000:8000"
+    env_file:
+      - backend/.env
     environment:
+      # override the localhost values from backend/.env for the container network
       ARANGO_HOST: arangodb
-      ARANGO_PORT: 8529
-      ARANGO_USER: root
-      ARANGO_PASSWORD: changeme
+      ARANGO_PORT: "8529"
+      ARANGO_PASSWORD: ${ARANGO_PASSWORD:-changeme}
+      DATABASE_URL: sqlite:////data/elysium.db
+      CORS_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
     volumes:
-      - model_cache:/root/.cache
+      - ./backend/save_folder:/app/save_folder
+      - backend_data:/data
+      - model_cache:/app/.hf_cache
 
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+        VITE_API_KEY: ${API_KEY:-changeme}
     container_name: elysium_frontend
     depends_on:
       - backend
@@ -45,4 +53,5 @@ services:
 
 volumes:
   arango_data:
+  backend_data:
   model_cache:

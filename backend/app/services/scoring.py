@@ -64,57 +64,11 @@ class DeepPurposeScorer:
             return []
 
         try:
-            # Minimal usage via oneliner.virtual_screening.
-            drug_names = [f"elysium_drug_{i}" for i in range(len(smiles_list))]
-            target_name = [target_id]
+            from .dti_deeppurpose import DeepPurposeScreeningModel
 
-            result = self._oneliner.virtual_screening(
-                [target_sequence],
-                X_repurpose=smiles_list,
-                target_name=target_name,
-                drug_names=drug_names,
-            )
-
-            # Import here to avoid top-level dependency if DeepPurpose isn't installed.
-            import pandas as pd  # type: ignore
-            import numpy as np   # type: ignore
-
-            if isinstance(result, pd.DataFrame):
-                df = result
-            else:
-                df = pd.DataFrame(result)
-
-            if df.empty:
-                return self._stub.score(smiles_list, target_sequence, target_id)
-
-            # Heuristic: find score column.
-            score_col = None
-            for col in df.columns:
-                low = col.lower()
-                if "y_pred" in low or "score" in low or "prediction" in low:
-                    score_col = col
-                    break
-
-            if score_col is None:
-                numeric_cols = df.select_dtypes(include=[np.number]).columns
-                if len(numeric_cols) == 0:
-                    return self._stub.score(smiles_list, target_sequence, target_id)
-                score_col = numeric_cols[0]
-
-            # Build mapping from drug name to score.
-            scores_by_name = {}
-            for _, row in df.iterrows():
-                name = row.get("drug_name") or row.get("Drug")
-                if name is None:
-                    continue
-                scores_by_name[str(name)] = float(row[score_col])
-
-            scores: List[float] = []
-            for name in drug_names:
-                scores.append(scores_by_name.get(name, 0.0))
-
-            return scores
-
+            if self._model is None:
+                self._model = DeepPurposeScreeningModel()
+            return self._model.score(smiles_list, target_sequence, target_id)
         except Exception as e:
             # If anything goes wrong in DeepPurpose, fall back and don't crash the API.
             print("[DeepPurposeScorer] Error during scoring, falling back to stub:", e)

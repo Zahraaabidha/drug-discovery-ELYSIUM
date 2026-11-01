@@ -1,29 +1,29 @@
 # app/arangodb_client.py
-
-from arango import ArangoClient
 import os
 
-# For now we read settings directly from environment variables.
-# This avoids importing anything from core.config so the backend can
-# run even if Arango is not set up yet.
-ARANGO_URL = os.getenv("ARANGO_URL", "http://127.0.0.1:8529")
-ARANGO_USERNAME = os.getenv("ARANGO_USERNAME", "root")
-ARANGO_PASSWORD = os.getenv("ARANGO_PASSWORD", "changeme")
-ARANGO_DB_NAME = os.getenv("ARANGO_DB_NAME", "elysium_kg")
+from arango import ArangoClient
 
 
-def get_arango_db():
-    """
-    Return a handle to the ELYSIUM ArangoDB database.
+def _settings():
+    """Read settings lazily so .env / docker env are honoured, with
+    ARANGO_URL or ARANGO_HOST+ARANGO_PORT, and ARANGO_USERNAME or ARANGO_USER."""
+    host = os.getenv("ARANGO_HOST", "127.0.0.1")
+    port = os.getenv("ARANGO_PORT", "8529")
+    return {
+        "url": os.getenv("ARANGO_URL") or f"http://{host}:{port}",
+        "username": os.getenv("ARANGO_USERNAME") or os.getenv("ARANGO_USER", "root"),
+        "password": os.getenv("ARANGO_PASSWORD", "changeme"),
+        "db": os.getenv("ARANGO_DB_NAME", "elysium_kg"),
+    }
 
-    This function is safe to have in the codebase even if you are not
-    calling it yet. It will only try to connect if something actually
-    imports and calls get_arango_db().
-    """
-    client = ArangoClient(hosts=ARANGO_URL)
-    db = client.db(
-        ARANGO_DB_NAME,
-        username=ARANGO_USERNAME,
-        password=ARANGO_PASSWORD,
-    )
-    return db
+
+def get_arango_db(create: bool = False):
+    """Return a handle to the ELYSIUM ArangoDB database.
+    With create=True the database is created first if it does not exist."""
+    cfg = _settings()
+    client = ArangoClient(hosts=cfg["url"])
+    if create:
+        sys_db = client.db("_system", username=cfg["username"], password=cfg["password"])
+        if not sys_db.has_database(cfg["db"]):
+            sys_db.create_database(cfg["db"])
+    return client.db(cfg["db"], username=cfg["username"], password=cfg["password"])

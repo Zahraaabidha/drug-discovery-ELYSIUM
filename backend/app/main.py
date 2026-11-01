@@ -1,12 +1,15 @@
 #C:\Users\Aabidha\Desktop\PROJECTS\elysium\elysium\backend\app\main.py
 from dotenv import load_dotenv
 load_dotenv()
+from rdkit import RDLogger
+RDLogger.DisableLog("rdApp.*")  # silence noisy RDKit parse warnings
+import os
 import datetime as dt
 import csv
 import io
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import cast, Optional
@@ -36,15 +39,50 @@ from app.routes import graph_view
 
 Base.metadata.create_all(bind=engine)
 
+
+def _bootstrap_arango():
+    """Create the Arango schema/graph and seed the KG; never block API startup."""
+    try:
+        from .kg_seed import seed_basic_kg
+        seed_basic_kg()
+        print("[Arango] schema + knowledge graph ready")
+    except Exception as e:
+        print(f"[Arango] bootstrap skipped: {e}")
+
+
+_bootstrap_arango()
+
 app = FastAPI(
     title="ELYSIUM – AI-Driven Drug Discovery Toolkit",
     version="0.1.0",
     description="Backend API for ELYSIUM, a modular agentic drug discovery system."
 )
 
+_PUBLIC_PATHS = ("/health", "/docs", "/redoc", "/openapi.json", "/molecule/image")
+
+
+@app.middleware("http")
+async def require_api_key(request, call_next):
+    """Require X-API-KEY (from API_KEY env) on every route except health/docs/images."""
+    expected = os.getenv("API_KEY")
+    path = request.url.path
+    if (
+        expected
+        and request.method != "OPTIONS"
+        and not path.startswith(_PUBLIC_PATHS)
+        and request.headers.get("x-api-key") != expected
+    ):
+        return JSONResponse({"detail": "Invalid or missing API key"}, status_code=401)
+    return await call_next(request)
+
+
+_ORIGINS = [o.strip() for o in os.getenv(
+    "CORS_ORIGINS", "http://localhost:5174,http://127.0.0.1:5174,http://localhost:5173,http://127.0.0.1:5173"
+).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,81 +1,58 @@
-
-#C:\Users\Aabidha\Desktop\PROJECTS\elysium\elysium\backend\app\services\dti_deeppurpose.py
 """
-DeepPurpose-based DTI (drug–target interaction) scoring for ELYSIUM.
+DeepPurpose-based DTI (drug-target interaction) scoring for ELYSIUM.
 
-This uses the DeepPurpose.oneliner.virtual_screening helper with
-pretrained models to score a list of SMILES against a single target.
+Wraps DeepPurpose.oneliner.virtual_screening with the pretrained BindingDB
+ensemble. The oneliner returns None and writes its results to disk, and it
+expects numpy arrays of equal length for drugs / targets (one row per pair),
+so we build the pairs ourselves and read the aggregated predictions back
+from the pickle it writes into a private temp directory.
 """
 
+import os
+import pickle
+import shutil
+import tempfile
+from pathlib import Path
 from typing import List
-import numpy as np
-import pandas as pd
 
-from DeepPurpose import oneliner
+import numpy as np
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+PRETRAINED_DIR = BACKEND_DIR / "save_folder" / "pretrained_models" / "DeepPurpose_BindingDB"
+
+
+def kd_nm_to_score(kd_nm: float) -> float:
+    """Convert a predicted Kd (nM) to a 0-1 score via pKd (pKd 10 -> 1.0)."""
+    kd_nm = max(float(kd_nm), 1e-6)
+    pkd = 9.0 - np.log10(kd_nm)
+    return float(min(max(pkd / 10.0, 0.0), 1.0))
 
 
 class DeepPurposeScreeningModel:
-    """
-    Lightweight wrapper around DeepPurpose's virtual_screening oneliner.
-
-    Usage:
-        model = DeepPurposeScreeningModel()
-        scores = model.score(smiles_list, target_seq, target_id="EGFR")
-    """
-
     def score(self, smiles_list: List[str], target_sequence: str, target_id: str) -> List[float]:
         if not smiles_list:
             return []
 
-        # Names to keep mapping stable
-        drug_names = [f"elysium_drug_{i}" for i in range(len(smiles_list))]
-        target_name = [target_id]
+        from DeepPurpose import oneliner
 
-        # DeepPurpose expects list of targets, list of drugs
-        # This call uses pretrained models under the hood.
-        result = oneliner.virtual_screening(
-            [target_sequence],                  # target (list of sequences)
-            X_repurpose=smiles_list,           # list of SMILES
-            target_name=target_name,
-            drug_names=drug_names,
-        )
+        n = len(smiles_list)
+        tmp = tempfile.mkdtemp(prefix="elysium_dp_")
+        try:
+            oneliner.virtual_screening(
+                np.array([target_sequence] * n, dtype=object),
+                X_repurpose=np.array(smiles_list, dtype=object),
+                target_name=[target_id] * n,
+                drug_names=[f"drug_{i}" for i in range(n)],
+                save_dir=tmp,
+                pretrained_dir=str(PRETRAINED_DIR),
+                agg="mean",
+                convert_y=True,
+            )
+            with open(os.path.join(tmp, "results_aggregation", "logits_VS_mean.pkl"), "rb") as f:
+                kd = np.asarray(pickle.load(f), dtype=float).reshape(-1)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
-        # Ensure we have a DataFrame
-        if isinstance(result, pd.DataFrame):
-            df = result
-        else:
-            df = pd.DataFrame(result)
-
-        if df.empty:
-            # Fallback: no predictions
-            return [0.0 for _ in smiles_list]
-
-        # Try to detect the score column (name can vary).
-        score_col = None
-
-        # Most likely options
-        for col in df.columns:
-            low = col.lower()
-            if "y_pred" in low or "score" in low or "prediction" in low:
-                score_col = col
-                break
-
-        # If we didn't find by name, grab the first numeric column.
-        if score_col is None:
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            if len(numeric_cols) == 0:
-                # No numeric columns -> fallback zeros
-                return [0.0 for _ in smiles_list]
-            score_col = numeric_cols[0]
-
-        # Align scores with our input order using drug_names
-        scores_by_name = {
-            str(row["drug_name"]) if "drug_name" in df.columns else str(row.get("Drug", name)): row[score_col]
-            for name, row in df.iterrows()
-        }
-
-        scores: List[float] = []
-        for name in drug_names:
-            scores.append(float(scores_by_name.get(name, 0.0)))
-
-        return scores
+        if len(kd) != n:
+            raise RuntimeError(f"DeepPurpose returned {len(kd)} predictions for {n} molecules")
+        return [kd_nm_to_score(v) for v in kd]

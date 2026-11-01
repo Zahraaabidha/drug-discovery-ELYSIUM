@@ -79,15 +79,18 @@ def run_discovery(req, db):
     6. Return ranked molecules.
     """
 
-    # 1) Generate candidate molecules (library-based for now)
-    smiles_list = generator.generate(target_id, num_molecules)
-
+    # 1) Generate novel candidates (oversample, then keep the best-scoring)
+    oversample = max(num_molecules * 3, num_molecules)
+    candidates = list(dict.fromkeys(generator.generate(target_id, oversample)))
 
     # 2) Resolve target sequence
     target_seq = resolve_target_sequence(target_id)
 
-    # 3) Score with configured backend
-    scores = scorer.score(smiles_list, target_seq, target_id)
+    # 3) Score with configured backend and keep the top N
+    cand_scores = scorer.score(candidates, target_seq, target_id)
+    ranked = sorted(zip(candidates, cand_scores), key=lambda x: x[1], reverse=True)[:num_molecules]
+    smiles_list = [s for s, _ in ranked]
+    scores = [sc for _, sc in ranked]
 
     # 4) Build Molecule objects with similarity info
     molecules: List[Molecule] = []

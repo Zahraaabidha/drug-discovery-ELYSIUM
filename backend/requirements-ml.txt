@@ -1,0 +1,7 @@
+torch==2.1.2
+transformers==4.36.2
+scikit-learn
+prettytable
+subword-nmt
+descriptastorus
+DeepPurpose==0.1.5

@@ -135,19 +135,17 @@ const AgentPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const history: ChatMessage[] = messages.map(m => ({ role: m.role, content: m.content }));
-      const res = await agentChat({
-        message: trimmed,
+            const res = await agentChat({
+        prompt: trimmed,
         session_id: sessionId,
-        history,
       });
 
       if (res.session_id) setSessionId(res.session_id);
 
       const assistantMsg: StoredMessage = {
         role: "assistant",
-        content: res.response,
-        tools: res.tools_used ?? [],
+        content: res.answer,
+        tools: (res.evidence ?? []).map(e => ({ name: e.tool, args: e.input, result: e.result })),
       };
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err: any) {

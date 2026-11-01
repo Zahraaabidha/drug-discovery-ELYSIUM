@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import GraphViewer from "../components/GraphViewer";
-import { API_BASE_URL } from "../api/client";
+import { API_BASE_URL, API_KEY } from "../api/client";
 
 export default function TargetGraphPage() {
   const { targetId } = useParams<{ targetId: string }>();
@@ -23,7 +23,7 @@ export default function TargetGraphPage() {
     console.log("[TargetGraph] fetching", { targetId, depth });
     try {
       const url = `${API_BASE_URL}/graph-view/target/${encodeURIComponent(targetId)}?depth=${depth}`;
-      const res = await fetch(url, { signal });
+      const res = await fetch(url, { signal, headers: { "X-API-KEY": API_KEY } });
       if (!res.ok) {
         throw new Error(await res.text());
       }

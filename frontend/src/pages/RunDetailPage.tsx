@@ -329,7 +329,7 @@ const RunDetailPage: React.FC = () => {
         <div className="bg-white rounded-[40px] border border-black/5 p-7 space-y-5">
           <p className="text-[10px] font-bold tracking-widests uppercase opacity-30">Run Stats</p>
           {[
-            { label: "Run ID", value: runId?.slice(0, 16) + "…" ?? "—" },
+            { label: "Run ID", value: runId ? runId.slice(0, 16) + "…" : "—" },
             { label: "Target", value: run?.target_id ?? "—" },
             { label: "Molecules", value: String(molecules.length) },
             { label: "Top score", value: molecules.length ? Math.max(...molecules.map(m => m.score)).toFixed(3) : "—" },

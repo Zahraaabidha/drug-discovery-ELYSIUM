@@ -2,7 +2,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # SQLite database file in the backend folder
-SQLALCHEMY_DATABASE_URL = "sqlite:///./elysium.db"
+import os
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./elysium.db")
 
 # For SQLite in FastAPI we must disable check_same_thread
 engine = create_engine(

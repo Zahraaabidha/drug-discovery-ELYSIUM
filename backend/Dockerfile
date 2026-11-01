@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # System deps required for RDKit and ML libs
 RUN apt-get update && apt-get install -y \

@@ -6,23 +6,27 @@ Later we can extend this with env-based configuration.
 from typing import Dict
 
 
-# ---- Target sequences (still small hardcoded map) ----
+# ---- Target sequences (real UniProt sequences in app/data/target_sequences.json) ----
 
-_TARGET_SEQUENCES: Dict[str, str] = {
-    "EGFR": "MRPSGTAGAALLALLAALCPASRALEEKKVCQGTSNKLTQLGTF...",   # demo / truncated
-    "DRD2": "MDSKGPLNVSFKREEVARRMVIAVTRTAVLAVGALIGNSLVVSV...",   # demo / truncated
-    "FAKE_TARGET": "MSTNPKPQRITSAFLLQLLGLSLGCLPAESRA...",        # fallback
-}
+import json
+from pathlib import Path
+
+_SEQ_FILE = Path(__file__).resolve().parents[1] / "data" / "target_sequences.json"
+_TARGETS: Dict[str, Dict[str, str]] = json.loads(_SEQ_FILE.read_text())
+_FALLBACK_TARGET = "EGFR"
+
+
+def known_targets() -> Dict[str, Dict[str, str]]:
+    return _TARGETS
 
 
 def resolve_target_sequence(target_id: str) -> str:
-    """
-    Resolve a target_id to an amino acid sequence string.
-
-    For now this is a simple dict lookup with a fallback.
-    Later we will plug in a real database / KG.
-    """
-    return _TARGET_SEQUENCES.get(target_id, _TARGET_SEQUENCES["FAKE_TARGET"])
+    """Resolve a target_id (e.g. EGFR) to its amino acid sequence."""
+    entry = _TARGETS.get(target_id.upper())
+    if entry is None:
+        print(f"[config] Unknown target '{target_id}', using {_FALLBACK_TARGET} sequence")
+        entry = _TARGETS[_FALLBACK_TARGET]
+    return entry["sequence"]
 
 
 # ---- Scoring backend selection ----

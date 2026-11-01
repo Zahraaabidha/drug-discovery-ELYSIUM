@@ -1,68 +1,51 @@
-# 🌌 ELYSIUM — AI-Driven Drug Discovery Toolkit  
-**An agentic, modular platform for small-molecule discovery powered by  
-FastAPI · ArangoDB · RDKit · DeepPurpose · FAISS · React + Tailwind**
+# ELYSIUM — AI-Driven Drug Discovery Toolkit
 
----
+An agentic platform for small-molecule discovery:
+**FastAPI · ArangoDB · RDKit · DeepPurpose · ChemBERTa · React + Tailwind**
 
-## 🚀 1. Overview
+## Pipeline
 
-**ELYSIUM** is a next-generation **AI-driven drug discovery and knowledge-graph system**, designed to generate, score, and analyze small-molecule candidates for a target protein.
+1. Pick a target protein (EGFR, DRD2, VEGFR2, ABL1, BRAF, HER2, ESR1, CDK2, BACE1, HIV1_PROTEASE — real UniProt sequences in `backend/app/data/target_sequences.json`).
+2. **Generate** novel molecules (RDKit mutation + BRICS recombination of library drugs, de-duplicated against the library).
+3. **Score** binding with the pretrained DeepPurpose BindingDB ensemble (predicted Kd → 0-1 score via pKd).
+4. **Filter / profile** with RDKit ADMET + Lipinski.
+5. **Compare** with known drugs (Morgan fingerprint Tanimoto + ChemBERTa cosine similarity).
+6. **Store** the run in SQLite and the knowledge graph in ArangoDB (`elysium_graph`: targets, drugs, diseases, molecules; edges `binds`, `treats`, `associated_with`, `similar_to`).
+7. **Explore** in the React UI (runs, analytics, interactive graph) or ask the LLM agent in natural language.
 
-Its pipeline integrates:
+## Run locally
 
-- **Molecular generation (stubbed generator → pluggable transformer later)**
-- **DeepPurpose-based DTI scoring**
-- **RDKit ADMET + Lipinski filtering**
-- **Chemical + semantic similarity search (fingerprint + chemBERTa)**
-- **Graph-structured knowledge storage (ArangoDB + SQL KG)**
-- **FAISS vector index for semantic retrieval**
-- **Async discovery jobs with background processing**
-- **Interactive React/Tailwind UI**
+```bash
+docker compose up -d arangodb                  # ArangoDB on :8529
+cd backend && venv/Scripts/python -m uvicorn app.main:app --port 8000
+cd frontend && npm install && npm run dev -- --port 5174
+```
 
-The goal is to create a **realistic, extensible drug discovery agent** capable of:
-- Querying targets  
-- Generating molecules  
-- Ranking multi-objectively  
-- Linking results across a biological knowledge graph  
-- Responding to natural language queries (*planned in Phase 8*)
+The backend creates the `elysium_kg` database, collections, graph and seed data on startup
+(or run `python -m app.kg_seed`). Browse it at http://localhost:8529 (user `root`).
 
----
+## Run everything in Docker
 
-## 🎯 2. Problem Statement
+```bash
+docker compose --env-file backend/.env up --build
+```
 
-Modern drug discovery suffers from:
+`--env-file` is required so the frontend build gets the same `API_KEY` as the backend.
+Pretrained models are mounted from `backend/save_folder` (not baked into the image).
 
-### ❗ Slow, expensive molecule screening  
-Wet-lab screening is costly and often requires months.
+## Configuration (`backend/.env`)
 
-### ❗ Poor integration between models & data  
-AI tools generate molecules, but connecting them to:
-- targets  
-- known drugs  
-- ADMET  
-- structural similarity  
-is difficult.
+| Var | Purpose |
+|---|---|
+| `API_KEY` | required `X-API-KEY` header on all routes except `/health`, docs and molecule images |
+| `ARANGO_HOST` / `ARANGO_PORT` (or `ARANGO_URL`), `ARANGO_USERNAME`, `ARANGO_PASSWORD`, `ARANGO_DB_NAME` | ArangoDB connection |
+| `OPENROUTER_API_KEY` | LLM for the agent chat |
+| `CORS_ORIGINS` | comma-separated allowed origins (default: local frontend) |
 
-### ❗ Lack of explainability  
-Researchers need *why* a molecule was chosen, not just *what*.
+Frontend: `frontend/.env` needs `VITE_API_BASE_URL` and `VITE_API_KEY` (same value as `API_KEY`).
 
-### **ELYSIUM solves these problems by unifying generation, scoring, similarity, ADMET, and graph-based reasoning into one workflow.**
+## Roadmap
 
----
-
-## 🏥 3. Target Industry  
-- **Industry:** Pharmaceutical · Biotechnology  
-- **Type:** B2B  
-- **User Group:** Computational chemists, AI drug-discovery researchers  
-- **Department:** R&D / Computational Biology / Discovery Informatics  
-
----
-
-## 🧪 4. Solution Scenario (User Flow)
-
-1. User enters a **target protein ID** (e.g., *EGFR*).  
-2. System generates **candidate SMILES molecules**.  
-3. DeepPurpose scores binding affinity.  
-4. RDKit performs **Lipinski + ADMET filtering**.  
-5. Similarity engine finds **closest known drug** (fingerprint + chemBERTa).  
-
+- Target-conditioned generation (transformer / reinforcement learning)
+- Natural-language agent over the knowledge graph
+- Tests and CI, richer ADMET models
