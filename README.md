@@ -1,8 +1,8 @@
-# ELYSIUM — Computational drug-discovery research framework
+# Theriac — Computational drug-discovery research framework
 
 FastAPI · SQLite (SQLAlchemy + Alembic) · ArangoDB · RDKit · DeepPurpose · ChemBERTa · FAISS · React + Tailwind
 
-> **Status: research prototype.** ELYSIUM organises compounds, measured data and model predictions so they can be
+> **Status: research prototype.** Theriac organises compounds, measured data and model predictions so they can be
 > explored and compared. Predicted binding values are model outputs, **not** experimental results, and generated
 > molecules are unsynthesised ideas. On the one target benchmarked so far the DTI model is only weakly predictive
 > (see [Evaluation results](#evaluation-results)).
@@ -34,7 +34,7 @@ FastAPI · SQLite (SQLAlchemy + Alembic) · ArangoDB · RDKit · DeepPurpose · 
 | Generation | RDKit functional-group edits + BRICS recombination of registry seed molecules, seeded RNG. Validity, uniqueness and novelty (against the registry) are measured per run. Returns fewer molecules rather than padding with reference drugs. |
 | DTI prediction | DeepPurpose pretrained BindingDB ensemble → predicted Kd (nM), pKd, model name/version stored. Unsupported target → HTTP 422. Model failure → HTTP 502 and the run is stored as `failed`. No placeholder scorer exists. |
 | Filtering | Backend filters (MW, logP, TPSA, HBD, HBA, rotatable bonds, Lipinski) applied to candidates before scoring; an impossible filter returns an empty result, not unfiltered molecules. The same filters exist in the Library API/UI. |
-| Knowledge graph | ArangoDB `elysium_graph` with targets, reference drugs, compounds with measurements, generated molecules and Reactome pathways. Every edge carries `evidence_type` (`experimental`, `computational_prediction`, `database_annotation`) and provenance. |
+| Knowledge graph | ArangoDB `Theriac_graph` with targets, reference drugs, compounds with measurements, generated molecules and Reactome pathways. Every edge carries `evidence_type` (`experimental`, `computational_prediction`, `database_annotation`) and provenance. |
 | Reproducible runs | Each run stores seed, request/generator parameters, models and versions, data sources, metrics, KG-sync status and `status` (`completed`, `failed`, `legacy_unverified`). |
 | Evaluation | Generation quality, similarity retrieval (FAISS vs exact; identity under SMILES rewriting), DTI vs measured affinity, plus a time-split DTI benchmark against six or more baselines. Reports store parameters, dataset and limitations. |
 | UI | **Compound Library** (`/library`): search, 15 filters, sorting, paging, compound profile (provenance, measurements vs predictions, similar compounds, notes), compare, similarity search, collections, annotations, data import, evaluation. Plus the existing Discovery, Runs, Graphs, Agent and Analysis pages (Discovery now offers the supported targets, real filters and a seed; Runs statistics are computed from stored runs). |
@@ -62,7 +62,7 @@ Cytoscape, Recharts, Vitest + Testing Library · Docker Compose, ArangoDB 3.11.
   (experimental), `predictions` (computational), `discovery_runs`, `molecules`, `collections`, `collection_items`,
   `annotations`, `evaluation_reports`, plus the legacy `kg_nodes`/`kg_edges`. Schema is managed by Alembic migrations
   (`backend/alembic`, applied automatically at startup; `0003` marks pre-registry runs as `legacy_unverified`).
-* **ArangoDB (`elysium_kg`)** – vertex collections `targets`, `drugs`, `compounds`, `molecules`, `pathways`; edge
+* **ArangoDB (`Theriac_kg`)** – vertex collections `targets`, `drugs`, `compounds`, `molecules`, `pathways`; edge
   collections `binds`, `participates_in`, `similar_to` (and legacy `treats`, `associated_with`, unused).
 * **FAISS** – in-memory indexes rebuilt from the registry; ChemBERTa embeddings cached in `index_data/`.
 
@@ -118,10 +118,10 @@ by DeepPurpose on first use and are not committed.
 |---|---|
 | `API_KEY` | required `X-API-KEY` on all routes except `/health`, API docs and molecule images |
 | `ARANGO_HOST`, `ARANGO_PORT`, `ARANGO_USERNAME`, `ARANGO_PASSWORD`, `ARANGO_DB_NAME` (or `ARANGO_URL`) | ArangoDB connection |
-| `DATABASE_URL` | relational DB (default `sqlite:///./elysium.db`) |
+| `DATABASE_URL` | relational DB (default `sqlite:///./Theriac.db`) |
 | `OPENROUTER_API_KEY` | LLM for the chat agent (optional) |
 | `CONTACT_EMAIL`, `NCBI_API_KEY`, `EXTERNAL_API_TIMEOUT` | optional settings for the public data APIs |
-| `DEEPPURPOSE_MODEL_DIR`, `ELYSIUM_INDEX_DIR`, `CORS_ORIGINS`, `LOG_LEVEL`, `ELYSIUM_DISABLE_ARANGO` | paths and behaviour |
+| `DEEPPURPOSE_MODEL_DIR`, `Theriac_INDEX_DIR`, `CORS_ORIGINS`, `LOG_LEVEL`, `Theriac_DISABLE_ARANGO` | paths and behaviour |
 
 `frontend/.env`: `VITE_API_BASE_URL`, `VITE_API_KEY` (same value as `API_KEY`; it is baked in at build time).
 
@@ -133,7 +133,7 @@ docker compose --env-file backend/.env down               # stop; data is kept
 ```
 
 * `--env-file` is required so the frontend image is built with the same `API_KEY` as the backend.
-* The compose file bind-mounts `backend/elysium.db` into the backend container, so the container and a local run share
+* The compose file bind-mounts `backend/Theriac.db` into the backend container, so the container and a local run share
   the same relational database (do not run both at once), and mounts `backend/save_folder` for the DeepPurpose models.
   ArangoDB data lives in the `arango_data` volume; ChemBERTa weights in `model_cache`; FAISS caches in `index_data`.
 * The first ChemBERTa use in a fresh `model_cache` downloads the model from Hugging Face.
@@ -181,7 +181,7 @@ cd backend
 venv/Scripts/python -m pytest -m "not slow and not network and not arango"   # fast, offline
 venv/Scripts/python -m pytest -m slow      # real DeepPurpose + ChemBERTa
 venv/Scripts/python -m pytest -m network   # live PubChem / ChEMBL / BindingDB / Reactome
-venv/Scripts/python -m pytest -m arango    # real ArangoDB, database `elysium_test` (dropped afterwards)
+venv/Scripts/python -m pytest -m arango    # real ArangoDB, database `Theriac_test` (dropped afterwards)
 cd ../frontend && npm test && npx tsc -b && npm run build
 ```
 
