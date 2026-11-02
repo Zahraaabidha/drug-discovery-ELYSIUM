@@ -1,7 +1,19 @@
+"""Seed the ArangoDB knowledge graph with entities that have a verifiable source.
+
+Only structural entities are seeded here: supported targets (UniProt) and the bundled reference
+drugs. Relationships are NOT hand-written: experimental links come from ChEMBL / BindingDB
+ingestion, predicted links from discovery runs, pathway links from Reactome (see services/kg_sync.py).
+Hand-written ("curated") relationships created by earlier versions are removed because they carried
+no citable evidence.
+"""
+import logging
+
 from .arangodb_client import get_arango_db
-from .core.config import known_targets
 from .fda_library import FDA_LIKE_DRUGS
 from .init_arango import init_arango_schema
+from .services.targets import all_targets
+
+log = logging.getLogger(__name__)
 
 TARGET_NAMES = {
     "EGFR": "Epidermal growth factor receptor",
@@ -16,23 +28,6 @@ TARGET_NAMES = {
     "HIV1_PROTEASE": "HIV-1 Gag-Pol polyprotein / protease",
 }
 
-DISEASES = {
-    "nsclc": "Non-small cell lung cancer",
-    "breast_cancer": "Breast cancer",
-    "parkinsons": "Parkinson's disease",
-    "alzheimers": "Alzheimer's disease",
-    "cml": "Chronic myeloid leukemia",
-    "melanoma": "Melanoma",
-    "hiv": "HIV/AIDS",
-}
-
-TARGET_DISEASE = [("EGFR", "nsclc"), ("HER2", "breast_cancer"), ("ESR1", "breast_cancer"),
-                  ("DRD2", "parkinsons"), ("BACE1", "alzheimers"), ("ABL1", "cml"),
-                  ("BRAF", "melanoma"), ("HIV1_PROTEASE", "hiv")]
-DRUG_DISEASE = [("gefitinib", "nsclc"), ("erlotinib", "nsclc"), ("tamoxifen", "breast_cancer"),
-                ("levodopa", "parkinsons"), ("donepezil", "alzheimers")]
-DRUG_TARGET = [("gefitinib", "EGFR"), ("erlotinib", "EGFR"), ("tamoxifen", "ESR1"), ("levodopa", "DRD2")]
-
 
 def _upsert(col, key, doc):
     if col.has(key):
@@ -41,35 +36,47 @@ def _upsert(col, key, doc):
         col.insert({"_key": key, **doc})
 
 
-def _edge(col, a, b, **props):
-    if not list(col.find({"_from": a, "_to": b}, limit=1)):
-        col.insert({"_from": a, "_to": b, **props})
+def _purge_unsourced(db) -> int:
+    """Delete relationships/diseases that earlier versions hand-wrote without evidence."""
+    removed = 0
+    for edge_col in ("binds", "treats", "associated_with"):
+        if db.has_collection(edge_col):
+            cur = db.aql.execute(
+                "FOR e IN @@c FILTER e.source IN ['curated','literature_stub'] REMOVE e IN @@c RETURN 1",
+                bind_vars={"@c": edge_col})
+            removed += len(list(cur))
+    # relationships/molecules written by the pre-registry pipeline carry no evidence type or provenance
+    for edge_col in ("binds", "similar_to"):
+        if db.has_collection(edge_col):
+            removed += len(list(db.aql.execute(
+                "FOR e IN @@c FILTER e.evidence_type == null REMOVE e IN @@c RETURN 1", bind_vars={"@c": edge_col})))
+    if db.has_collection("molecules"):
+        removed += len(list(db.aql.execute("FOR m IN molecules FILTER m.origin == null REMOVE m IN molecules RETURN 1")))
+    if db.has_collection("diseases"):
+        removed += len(list(db.aql.execute("FOR d IN diseases REMOVE d IN diseases RETURN 1")))
+    return removed
 
 
 def seed_basic_kg():
     init_arango_schema()
     db = get_arango_db()
+    purged = _purge_unsourced(db)
+    if purged:
+        log.info("Removed %d unsourced hand-written KG documents", purged)
 
-    for tid, entry in known_targets().items():
-        _upsert(db.collection("targets"), tid, {
-            "symbol": tid, "name": TARGET_NAMES.get(tid, tid),
-            "uniprot_id": entry["uniprot_id"],
+    for sym, t in all_targets().items():
+        _upsert(db.collection("targets"), sym, {
+            "symbol": sym, "name": TARGET_NAMES.get(sym, sym), "uniprot_id": t.uniprot_id,
+            "source": "UniProt", "type": "targets",
         })
     for d in FDA_LIKE_DRUGS:
         _upsert(db.collection("drugs"), d["name"].lower(), {
             "name": d["name"], "smiles": d["smiles"], "indication": d.get("indication"),
+            "origin": "reference", "source": "elysium_reference", "type": "drugs",
         })
-    for key, name in DISEASES.items():
-        _upsert(db.collection("diseases"), key, {"name": name})
-
-    for t, dis in TARGET_DISEASE:
-        _edge(db.collection("associated_with"), f"targets/{t}", f"diseases/{dis}", source="curated")
-    for drug, dis in DRUG_DISEASE:
-        _edge(db.collection("treats"), f"drugs/{drug}", f"diseases/{dis}", source="curated")
-    for drug, t in DRUG_TARGET:
-        _edge(db.collection("binds"), f"drugs/{drug}", f"targets/{t}", source="curated")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     seed_basic_kg()
     print("ArangoDB knowledge graph seeded")

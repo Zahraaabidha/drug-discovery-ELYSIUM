@@ -36,6 +36,8 @@ RUN pip install --no-cache-dir \
 # Copy application code
 # ---------------------------
 COPY backend/app ./app
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini ./alembic.ini
 
 ENV PYTHONPATH=/app
 

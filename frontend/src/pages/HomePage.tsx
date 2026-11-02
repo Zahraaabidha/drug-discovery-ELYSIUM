@@ -102,7 +102,7 @@ const HomePage: React.FC = () => {
 
   const advantages = [
     { num: "01", title: "Precision Scoring", desc: "DeepPurpose DTI models predict binding affinity with BindingDB pretrained weights across all targets." },
-    { num: "02", title: "ADMET Compliance", desc: "RDKit computes Lipinski, logP, TPSA, and rotatable bonds — filtering non-viable candidates automatically." },
+    { num: "02", title: "Physicochemical Rules", desc: "RDKit computes Lipinski, logP, TPSA, and rotatable bonds — filtering non-viable candidates automatically." },
     { num: "03", title: "Graph Reasoning", desc: "ArangoDB knowledge graph links every molecule to known drugs, targets, and pathways for multi-hop traversal." },
   ];
 
@@ -170,7 +170,7 @@ const HomePage: React.FC = () => {
         <div className="flex animate-ticker whitespace-nowrap">
           {Array(2).fill(null).map((_, i) => (
             <div key={i} className="flex items-center gap-0 flex-shrink-0">
-              {["DRUG DISCOVERY", "ADMET PROFILING", "KNOWLEDGE GRAPHS", "AGENTIC AI", "DTI SCORING", "MOLECULAR EMBEDDINGS", "VIRTUAL SCREENING", "CHEMBERTA"].map(t => (
+              {["DRUG DISCOVERY", "PHYSICOCHEMICAL PROFILING", "KNOWLEDGE GRAPHS", "AGENTIC AI", "DTI SCORING", "MOLECULAR EMBEDDINGS", "VIRTUAL SCREENING", "CHEMBERTA"].map(t => (
                 <span key={t} className="flex items-center gap-6 px-8 text-sm font-semibold tracking-[0.15em] text-neutral-300 uppercase">
                   {t}
                   <span className="w-1.5 h-1.5 rounded-full bg-violet-300 flex-shrink-0" />
@@ -297,7 +297,7 @@ const HomePage: React.FC = () => {
                   { angle: 60, label: "BRAF", r: 120 },
                   { angle: 160, label: "KRAS", r: 120 },
                   { angle: 20, label: "DTI Scoring", r: 80 },
-                  { angle: 120, label: "ADMET", r: 80 },
+                  { angle: 120, label: "PHYSCHEM", r: 80 },
                   { angle: 220, label: "KG Edges", r: 80 },
                 ].map(({ angle, label, r }) => {
                   const rad = (angle * Math.PI) / 180;

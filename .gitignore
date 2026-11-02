@@ -54,3 +54,11 @@ backend/elysium.db.bak
 # =========================
 docker-data/
 *.log
+backend/index_data/
+backend/*.bak
+backend/_*.db
+*.log
+
+# Markdown: ignore everything except README files
+*.md
+!README.md

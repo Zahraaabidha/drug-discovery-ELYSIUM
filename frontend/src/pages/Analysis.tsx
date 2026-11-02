@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { Database as LibraryIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { 
   Activity,
@@ -160,6 +161,7 @@ export default function Analysis() {
               <SidebarItem icon={Home} label="Home" to="/" />
               <SidebarItem icon={Activity} label="Runs" to="/discovery" />
               <SidebarItem icon={Compass} label="Discovery" to="/dashboard" />
+              <SidebarItem icon={LibraryIcon} label="Library" to="/library" />
               <SidebarItem icon={BarChart3} label="Graphs" to="/graphs" />
               <SidebarItem icon={Bot} label="Agent" to="/agent" />
               <SidebarItem icon={Microscope} label="Analysis" to="/analysis" active />
@@ -325,7 +327,7 @@ export default function Analysis() {
               <div className="flex justify-between items-center mb-8">
                 <div className="space-y-1">
                   <h3 className="text-sm font-bold">Per-target comparison</h3>
-                  <p className="text-[10px] opacity-40">ADMET and binding stats grouped by target protein</p>
+                  <p className="text-[10px] opacity-40">Physicochemical and binding stats grouped by target protein</p>
                 </div>
                 <span className="text-[10px] font-bold tracking-widest uppercase opacity-20">1 Targets</span>
               </div>

@@ -121,3 +121,21 @@ def find_most_semantic_drug(smiles: str) -> Optional[SimilarDrug]:
     chemBERTa-nearest known drug.
     """
     return embedder.most_similar_drug(smiles)
+
+
+class EmbeddingUnavailable(RuntimeError):
+    """ChemBERTa could not be loaded or failed to embed a molecule."""
+
+
+def embedding_model_name() -> str:
+    return CHEMBERTA_MODEL_NAME
+
+
+def embed_smiles(smiles: str) -> np.ndarray:
+    """Unit-length ChemBERTa CLS embedding. Raises EmbeddingUnavailable on failure (no fallback)."""
+    if not embedder._available:
+        raise EmbeddingUnavailable("ChemBERTa model is not loaded")
+    vec = embedder._smiles_to_embedding(smiles)
+    if vec is None:
+        raise EmbeddingUnavailable(f"Could not embed SMILES {smiles!r}")
+    return vec.astype("float32")

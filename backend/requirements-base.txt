@@ -9,3 +9,6 @@ Pillow
 numpy==1.26.4
 pandas==2.3.3
 rdkit==2025.9.3
+alembic
+faiss-cpu
+scipy

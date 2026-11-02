@@ -3,7 +3,7 @@ import React from "react";
 const models = [
   {
     name: "RDKit",
-    role: "Descriptor calculation, Lipinski and ADMET heuristics, and molecule rendering for quick visual QA.",
+    role: "Descriptor calculation, Lipinski rule-of-five and basic descriptors, and molecule rendering for quick visual QA.",
   },
   {
     name: "DeepPurpose",
@@ -40,7 +40,7 @@ const AboutPage: React.FC = () => {
           <li>Define biological target, molecule count, and medicinal filters.</li>
           <li>Sample candidate scaffolds from curated libraries (future: transformer generators).</li>
           <li>Score against target sequences via DeepPurpose (fallback stub ensures determinism).</li>
-          <li>Annotate with RDKit ADMET metrics and similarity to known drugs.</li>
+          <li>Annotate with RDKit physicochemical descriptors and similarity to known drugs.</li>
           <li>Persist to structured runs and attach nodes/edges inside the knowledge graph.</li>
         </ol>
       </section>

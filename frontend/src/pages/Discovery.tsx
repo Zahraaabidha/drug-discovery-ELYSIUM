@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Database as LibraryIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { 
   Activity,
@@ -49,7 +50,7 @@ const SidebarItem = ({ icon: Icon, label, active = false, count, to }: { icon: a
   </Link>
 );
 
-const DiscoveryStatCard = ({ title, value, subValue, change, chartData, active = false }: { title: string, value: string, subValue?: string, change: string, chartData?: any[], active?: boolean }) => (
+const DiscoveryStatCard = ({ title, value, subValue, change, chartData, active = false }: { title: string, value: string, subValue?: string, change?: string, chartData?: any[], active?: boolean }) => (
   <div className={`p-6 rounded-[32px] border border-black/5 flex flex-col justify-between min-h-[180px] transition-all ${active ? 'bg-[#111111] text-white' : 'bg-white hover:shadow-lg'}`}>
     <div className="flex justify-between items-start">
       <span className={`text-[10px] font-bold tracking-widest uppercase ${active ? 'opacity-40' : 'opacity-20'}`}>{title}</span>
@@ -62,12 +63,6 @@ const DiscoveryStatCard = ({ title, value, subValue, change, chartData, active =
       <div className="space-y-1">
         <div className="text-4xl font-display font-medium tracking-tight">{value}</div>
         {subValue && <div className={`text-[10px] font-medium ${active ? 'opacity-40' : 'opacity-40'}`}>{subValue}</div>}
-        <div className="flex items-center gap-2 mt-2">
-          <div className={`flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full ${active ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
-            <ArrowUpRight size={10} className="rotate-45" />
-            {change} from last run
-          </div>
-        </div>
       </div>
       
       {chartData && (
@@ -85,15 +80,6 @@ const DiscoveryStatCard = ({ title, value, subValue, change, chartData, active =
   </div>
 );
 
-const runActivityData = [
-  { day: 'S', runs: 40 },
-  { day: 'M', runs: 10 },
-  { day: 'T', runs: 5 },
-  { day: 'W', runs: 25 },
-  { day: 'T', runs: 35 },
-  { day: 'F', runs: 10 },
-  { day: 'S', runs: 30 },
-];
 
 
 
@@ -110,10 +96,21 @@ export default function Discovery() {
       .finally(() => setLoading(false));
   }, []);
 
+  const [targetFilter, setTargetFilter] = useState<string>("");
   const filtered = runs.filter(r =>
-    r.run_id.toLowerCase().includes(search.toLowerCase()) ||
-    r.target_id.toLowerCase().includes(search.toLowerCase())
+    (!targetFilter || r.target_id === targetFilter) &&
+    (r.run_id.toLowerCase().includes(search.toLowerCase()) ||
+     r.target_id.toLowerCase().includes(search.toLowerCase()))
   );
+
+  // All figures below are computed from the runs returned by the API (most recent 50).
+  const totalMolecules = runs.reduce((n, r) => n + r.num_molecules, 0);
+  const byTarget = Object.entries(runs.reduce<Record<string, number>>((acc, r) => { acc[r.target_id] = (acc[r.target_id] ?? 0) + 1; return acc; }, {}))
+    .sort((a, b) => b[1] - a[1]);
+  const maxTargetRuns = byTarget[0]?.[1] ?? 1;
+  const DAYS = ["S", "M", "T", "W", "T", "F", "S"];
+  const runActivityData = DAYS.map((day, i) => ({ day, runs: runs.filter(r => new Date(r.created_at).getDay() === i).length }));
+  const maxDayRuns = Math.max(1, ...runActivityData.map(d => d.runs));
 
   return (
     <div className="flex min-h-screen bg-[#F8F9FA] text-[#111111] font-sans p-4 md:p-6 gap-6">
@@ -133,6 +130,7 @@ export default function Discovery() {
               <SidebarItem icon={Home} label="Home" to="/" />
               <SidebarItem icon={Activity} label="Runs" to="/discovery" active />
               <SidebarItem icon={Compass} label="Discovery" to="/dashboard" />
+              <SidebarItem icon={LibraryIcon} label="Library" to="/library" />
               <SidebarItem icon={BarChart3} label="Graphs" to="/graphs" />
               <SidebarItem icon={Bot} label="Agent" to="/agent" />
               <SidebarItem icon={Microscope} label="Analysis" to="/analysis" />
@@ -206,36 +204,11 @@ export default function Discovery() {
             <p className="text-sm opacity-40">Plan, track, and audit every experiment with full provenance.</p>
           </div>
 
-          {/* Stats Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <DiscoveryStatCard 
-              title="Total Runs" 
-              value="25" 
-              subValue="24 completed" 
-              change="8%" 
-              chartData={[40, 60, 30, 80, 50, 90, 70]}
-              active 
-            />
-            <DiscoveryStatCard 
-              title="Completed" 
-              value="24" 
-              subValue="Fully processed" 
-              change="6%" 
-              chartData={[30, 50, 40, 60, 45, 70, 65]}
-            />
-            <DiscoveryStatCard 
-              title="In Review" 
-              value="1" 
-              subValue="Awaiting sign-off" 
-              change="2%" 
-            />
-            <DiscoveryStatCard 
-              title="Molecules" 
-              value="127" 
-              subValue="Total generated" 
-              change="12%" 
-              chartData={[20, 40, 35, 55, 50, 80, 75]}
-            />
+          {/* Stats Grid (computed from the API response) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            <DiscoveryStatCard title="Runs" value={String(runs.length)} subValue="most recent 50 shown" active />
+            <DiscoveryStatCard title="Targets" value={String(byTarget.length)} subValue="distinct targets screened" />
+            <DiscoveryStatCard title="Molecules" value={String(totalMolecules)} subValue="stored across these runs" />
           </div>
 
           {/* Middle Row: Activity & Targets */}
@@ -244,7 +217,7 @@ export default function Discovery() {
             <div className="lg:col-span-2 bg-white rounded-[40px] border border-black/5 p-8 flex flex-col">
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-sm font-bold">Run Activity</h3>
-                <span className="text-[10px] font-bold tracking-widest uppercase opacity-20">By day of week</span>
+                <span className="text-[10px] font-bold tracking-widest uppercase opacity-20">Runs by day of week</span>
               </div>
               <div className="flex-1 min-h-[180px] flex items-end justify-between px-4">
                 {runActivityData.map((item, i) => (
@@ -252,11 +225,11 @@ export default function Discovery() {
                     <div className="relative w-12 flex items-end justify-center">
                       <motion.div 
                         initial={{ height: 0 }}
-                        animate={{ height: `${item.runs * 2.5}px` }}
+                        animate={{ height: `${Math.max(4, (item.runs / maxDayRuns) * 120)}px` }}
                         className="w-full bg-purple-500 rounded-xl group-hover:bg-purple-600 transition-colors"
                       />
                     </div>
-                    <span className="text-[10px] font-bold opacity-40">{item.day}</span>
+                    <span className="text-[10px] font-bold opacity-40" title={`${item.runs} run(s)`}>{item.day}</span>
                   </div>
                 ))}
               </div>
@@ -266,22 +239,21 @@ export default function Discovery() {
             <div className="bg-white rounded-[40px] border border-black/5 p-8 flex flex-col">
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-sm font-bold">Targets</h3>
-                <span className="text-[10px] font-bold tracking-widest uppercase opacity-20">1 Active</span>
+                <span className="text-[10px] font-bold tracking-widest uppercase opacity-20">{byTarget.length} active</span>
               </div>
-              <div className="space-y-8 flex-1 flex flex-col justify-center">
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <span className="px-3 py-1 bg-purple-50 text-purple-600 rounded-lg text-[10px] font-bold">EGFR</span>
-                    <span className="text-xs font-bold opacity-40">25</span>
+              <div className="space-y-6 flex-1 flex flex-col justify-center">
+                {byTarget.length === 0 && <p className="text-xs opacity-40">No runs yet.</p>}
+                {byTarget.map(([t, n]) => (
+                  <div key={t} className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="px-3 py-1 bg-purple-50 text-purple-600 rounded-lg text-[10px] font-bold">{t}</span>
+                      <span className="text-xs font-bold opacity-40">{n} run{n === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="h-2 bg-black/5 rounded-full overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: `${(n / maxTargetRuns) * 100}%` }} className="h-full bg-purple-500 rounded-full" />
+                    </div>
                   </div>
-                  <div className="h-2 bg-black/5 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: '85%' }}
-                      className="h-full bg-purple-500 rounded-full"
-                    />
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
@@ -290,9 +262,11 @@ export default function Discovery() {
           <div className="bg-white rounded-[40px] border border-black/5 p-8">
             <div className="flex justify-between items-center mb-8">
               <h3 className="text-sm font-bold">All Runs</h3>
-              <div className="flex gap-2">
-                <button className="px-4 py-1.5 bg-black text-white rounded-full text-[10px] font-bold tracking-widest uppercase">All</button>
-                <button className="px-4 py-1.5 bg-black/5 text-black/40 rounded-full text-[10px] font-bold tracking-widest uppercase hover:bg-black/10 transition-all">EGFR</button>
+              <div className="flex gap-2 flex-wrap">
+                {["", ...byTarget.map(([t]) => t)].map(t => (
+                  <button key={t || "all"} onClick={() => setTargetFilter(t)} aria-pressed={targetFilter === t}
+                    className={`px-4 py-1.5 rounded-full text-[10px] font-bold tracking-widest uppercase transition-all ${targetFilter === t ? "bg-black text-white" : "bg-black/5 text-black/40 hover:bg-black/10"}`}>{t || "All"}</button>
+                ))}
               </div>
             </div>
 
@@ -314,11 +288,13 @@ export default function Discovery() {
                   ) : filtered.length === 0 ? (
                     <tr><td colSpan={6} className="py-12 text-center text-xs opacity-40">No runs found.</td></tr>
                   ) : filtered.map((run, i) => {
-                    const isRecent = i === 0;
-                    const status = isRecent ? "In Review" : "Completed";
-                    const statusColor = isRecent
-                      ? "bg-yellow-50 text-yellow-600 border-yellow-100"
-                      : "bg-green-50 text-green-600 border-green-100";
+                    // real status recorded with the run (not inferred from position)
+                    const STATUS: Record<string, [string, string]> = {
+                      completed: ["Completed", "bg-green-50 text-green-600 border-green-100"],
+                      failed: ["Failed", "bg-red-50 text-red-600 border-red-100"],
+                      legacy_unverified: ["Legacy", "bg-yellow-50 text-yellow-700 border-yellow-100"],
+                    };
+                    const [status, statusColor] = STATUS[run.status ?? ""] ?? ["Unknown", "bg-black/5 text-black/50 border-black/10"];
                     return (
                     <tr key={run.run_id} onClick={() => navigate(`/runs/${run.run_id}`)} className="group hover:bg-black/[0.01] transition-colors cursor-pointer">
                       <td className="py-5">

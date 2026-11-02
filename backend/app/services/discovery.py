@@ -1,249 +1,238 @@
-#C:\Users\Aabidha\Desktop\PROJECTS\elysium\elysium\backend\app\services\discovery.py*
+"""ELYSIUM discovery pipeline (registry-backed, reproducible).
 
-import uuid
-from typing import List, cast
+1. Resolve the target (unsupported targets are rejected, never substituted).
+2. Generate NEW molecules from registry seed compounds (validity/uniqueness/novelty tracked).
+3. Apply physicochemical filters to candidates.
+4. Predict drug-target interaction with DeepPurpose (failure => error, no placeholder scores).
+5. Register the selected molecules (origin = generated) and store predictions with units/model info.
+6. Compare with known compounds (Morgan fingerprints / FAISS, ChemBERTa).
+7. Persist the run with its parameters, seed, models, data sources and metrics.
+8. Sync relationships to the ArangoDB knowledge graph (status recorded on the run).
+"""
+from __future__ import annotations
+
+import logging
+import random
+from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from ..schemas import Molecule, DiscoveryRequest, DiscoveryResponse
-from ..core.config import resolve_target_sequence
-from ..models import DiscoveryRun, MoleculeRecord
+from .. import models as m
+from ..schemas import ADMETProperties, DiscoveryRequest, DiscoveryResponse, Molecule, NearestKnown, SimilarDrug
 from ..similarity import find_combined_similar_drugs
-from .scoring import get_scorer
+from . import chem, registry
 from .generation import get_generator
 from .kg import attach_run_to_kg
-from .admet import calculate_admet
-from app.arangodb_client import get_arango_db
+from .scoring import ScoringError, get_scorer
+from .similarity_index import index as similarity_index
+from .targets import resolve_target
+
+log = logging.getLogger(__name__)
+
+OVERSAMPLE = 3          # candidates generated per requested molecule
+MAX_SEED_COMPOUNDS = 400
 
 
-scorer = get_scorer()
-generator = get_generator()
-
-def _generate_candidate_smiles(num: int) -> List[str]:
-    """
-    Temporary candidate generator.
-
-    Right now we just cycle through a few simple SMILES strings.
-    Later this will be replaced by:
-      - TamGen or other Transformer generator
-      - Library-based sampling + scaffold hopping
-    """
-    base_smiles = [
-        "CCO",          # ethanol
-        "CC(=O)O",      # acetic acid
-        "CCN(CC)CC",    # triethylamine
-        "CCOC(=O)C",    # ethyl acetate
-        "CC(C)O",       # isopropanol
-    ]
-    return (base_smiles * ((num // len(base_smiles)) + 1))[:num]
-
-
-def _simple_score(smiles_list: List[str], target_sequence: str, target_id: str) -> List[float]:
-    """
-    Simple deterministic scoring stub.
-
-    This mimics a DTI model by assigning decreasing scores.
-    It keeps ELYSIUM's pipeline structure intact until we plug in
-    DeepPurpose (or another real model) again.
-    """
-    scores: List[float] = []
-    base = 1.0
-    step = 0.05  # how much the score drops per molecule
-
-    for i, _ in enumerate(smiles_list):
-        s = base - step * i
-        if s < 0:
-            s = 0.0
-        scores.append(s)
-
-    return scores
-
-
-def run_discovery(req, db):
+def _req_to_dict(req) -> Dict:
     if isinstance(req, dict):
-        target_id = req["target_id"]
-        num_molecules = req.get("num_molecules", 5)
-        lipinski_only = req.get("lipinski_only", False)
-    else:
-        target_id = req.target_id
-        num_molecules = req.num_molecules
-        lipinski_only = req.lipinski_only
-    """
-    ELYSIUM discovery pipeline:
-
-    1. Generate candidate molecules.
-    2. Resolve target sequence.
-    3. Score molecules with configured backend (stub or DeepPurpose).
-    4. Compute similarity to known drugs.
-    5. Save to DB.
-    6. Return ranked molecules.
-    """
-
-    # 1) Generate novel candidates (oversample, then keep the best-scoring)
-    oversample = max(num_molecules * 3, num_molecules)
-    candidates = list(dict.fromkeys(generator.generate(target_id, oversample)))
-
-    # 2) Resolve target sequence
-    target_seq = resolve_target_sequence(target_id)
-
-    # 3) Score with configured backend and keep the top N
-    cand_scores = scorer.score(candidates, target_seq, target_id)
-    ranked = sorted(zip(candidates, cand_scores), key=lambda x: x[1], reverse=True)[:num_molecules]
-    smiles_list = [s for s, _ in ranked]
-    scores = [sc for _, sc in ranked]
-
-    # 4) Build Molecule objects with similarity info
-    molecules: List[Molecule] = []
-    for smi, score in zip(smiles_list, scores):
-        fp_neighbor, semantic_neighbor = find_combined_similar_drugs(smi)
-        admet_props = calculate_admet(smi)
-
-        note_parts = ["Scored with ELYSIUM backend."]
-
-        if fp_neighbor is not None:
-            note_parts.append(
-                f"Most similar known drug (fingerprint): "
-                f"{fp_neighbor.name} (Tanimoto={fp_neighbor.similarity:.2f})."
-            )
-
-        if (
-            semantic_neighbor is not None
-            and semantic_neighbor.semantic_similarity is not None
-            and (fp_neighbor is None or semantic_neighbor.name != fp_neighbor.name)
-        ):
-            note_parts.append(
-                f"Most similar known drug (chemBERTa): "
-                f"{semantic_neighbor.name} "
-                f"(cosine={semantic_neighbor.semantic_similarity:.2f})."
-            )
-
-        if admet_props is not None:
-            lip = "pass" if admet_props.lipinski_pass else "fail"
-            note_parts.append(
-                f"Lipinski {lip}, violations={admet_props.lipinski_violations}."
-            )
-
-        molecules.append(
-            Molecule(
-                smiles=smi,
-                score=score,
-                source=type(scorer).__name__,
-                notes=" ".join(note_parts),
-                similar_drug=fp_neighbor,
-                similar_drug_semantic=semantic_neighbor,
-                admet=admet_props,
-            )
-        )
-
-            # Optional Lipinski filter
-    if lipinski_only:
-        filtered = [
-            m for m in molecules
-            if m.admet is not None and m.admet.lipinski_pass
-        ]
-        if filtered:
-            molecules = filtered
-        # if filtered is empty, we keep original list, so the user still gets something
+        return DiscoveryRequest(**req).model_dump()
+    if isinstance(req, DiscoveryRequest):
+        return req.model_dump()
+    return DiscoveryRequest(**dict(req)).model_dump()
 
 
-    # Sort by score desc
-    molecules.sort(key=lambda m: m.score, reverse=True)
+def passes_filters(pc: chem.PhysChem, p: Dict) -> bool:
+    """Physicochemical filters from the request. Every supplied filter is enforced."""
+    if p.get("lipinski_only") and not pc.lipinski_pass:
+        return False
+    checks = [
+        (p.get("min_mw"), lambda v: pc.mol_weight >= v), (p.get("max_mw"), lambda v: pc.mol_weight <= v),
+        (p.get("min_logp"), lambda v: pc.logp >= v), (p.get("max_logp"), lambda v: pc.logp <= v),
+        (p.get("max_tpsa"), lambda v: pc.tpsa <= v), (p.get("max_hbd"), lambda v: pc.hbd <= v),
+        (p.get("max_hba"), lambda v: pc.hba <= v), (p.get("max_rotatable_bonds"), lambda v: pc.rotatable_bonds <= v),
+    ]
+    return all(ok(v) for v, ok in checks if v is not None)
 
-    # 5) Save to DB (same as before)
-    run_record = DiscoveryRun(
-        target_id=target_id,
-        num_molecules=len(molecules),
+
+def _physchem_schema(pc: chem.PhysChem) -> ADMETProperties:
+    return ADMETProperties(
+        molecular_weight=pc.mol_weight, logp=pc.logp, hbd=pc.hbd, hba=pc.hba, rotatable_bonds=pc.rotatable_bonds,
+        tpsa=pc.tpsa, lipinski_violations=pc.lipinski_violations, lipinski_pass=pc.lipinski_pass,
     )
-    db.add(run_record)
-    db.flush()  # assign ID
 
-    for m in molecules:
-        admet = m.admet
-        fp = m.similar_drug
-        sem = m.similar_drug_semantic
 
-        db.add(
-            MoleculeRecord(
-                run_id=run_record.id,
-                smiles=m.smiles,
-                score=m.score,
-                source=m.source,
-                notes=m.notes,
-                scorer_used=type(scorer).__name__,
+def _nearest_known(db: Session, smiles: str, own_id: Optional[int], k: int = 3) -> List[NearestKnown]:
+    out = []
+    for n in similarity_index.search_fingerprint(smiles, k=k + 1, exclude_id=own_id)[:k]:
+        c = db.get(m.Compound, n.compound_id)
+        if c is not None:
+            out.append(NearestKnown(compound_id=c.id, name=c.name, origin=c.origin, tanimoto=round(n.similarity, 4)))
+    return out
 
-                # ADMET
-                admet_mw=admet.molecular_weight if admet else None,
-                admet_logp=admet.logp if admet else None,
-                admet_hbd=admet.hbd if admet else None,
-                admet_hba=admet.hba if admet else None,
-                admet_tpsa=admet.tpsa if admet else None,
-                admet_rotatable_bonds=admet.rotatable_bonds if admet else None,
-                admet_lipinski_pass=1 if (admet and admet.lipinski_pass) else 0,
-                admet_lipinski_violations=admet.lipinski_violations if admet else None,
 
-                # Similarity
-                similar_drug_fp=fp.name if fp else None,
-                tanimoto_fp=fp.similarity if fp else None,
-                similar_drug_semantic=sem.name if sem else None,
-                tanimoto_semantic=sem.semantic_similarity if sem else None,
-            )
-        )
+def run_discovery(req, db: Session) -> DiscoveryResponse:
+    p = _req_to_dict(req)
+    target = resolve_target(p["target_id"])          # raises UnsupportedTarget
+    seed = p["seed"] if p.get("seed") is not None else random.SystemRandom().randrange(2**31)
+    n = p["num_molecules"]
 
-    # Attach this run to the knowledge graph (nodes + edges)
-    attach_run_to_kg(db, run_record, molecules)
+    # Registry must contain the reference library before we generate / compare.
+    if db.query(m.Compound).count() == 0:
+        registry.import_reference_collections(db)
 
-    db.commit()
-    db.refresh(run_record)
-
+    scorer = get_scorer()
+    scorer_info = scorer.model_info()
+    models_used = {
+        "dti": scorer_info,
+        "embedding": None,
+        "fingerprint": {"type": "morgan", "radius": chem.FP_RADIUS, "bits": chem.FP_BITS},
+    }
     try:
-        arango = get_arango_db()
-        molecules_col = arango.collection("molecules")
-        binds_edge = arango.collection("binds")
-        similar_edge = arango.collection("similar_to")
+        from .embeddings import embedding_model_name
+        models_used["embedding"] = {"model_name": embedding_model_name()}
+    except Exception:  # pragma: no cover
+        pass
 
-        for idx, m in enumerate(molecules):
-            mol_key = f"{run_record.id}_{idx}"
-            try:
-                molecules_col.insert({
-                    "_key": mol_key,
-                    "run_id": run_record.id,
-                    "index": idx,
-                    "target_id": target_id,
-                    "smiles": m.smiles,
-                    "score": m.score,
-                })
-            except Exception:
-                pass
+    known_keys = {ik for (ik,) in db.query(m.Compound.inchikey).all()}
+    seed_rows = (db.query(m.Compound.canonical_smiles)
+                 .filter(m.Compound.origin.in_([m.ORIGIN_REFERENCE, m.ORIGIN_EXTERNAL]))
+                 .order_by(m.Compound.id).limit(MAX_SEED_COMPOUNDS).all())
+    generator = get_generator([s for (s,) in seed_rows])
 
-            try:
-                binds_edge.insert({
-                    "_from": f"molecules/{mol_key}",
-                    "_to": f"targets/{target_id}",
-                    "score": m.score,
-                    "source": "ELYSIUM/DeepPurpose"
-                })
-            except Exception:
-                pass
+    run = m.DiscoveryRun(
+        target_id=target.symbol, num_molecules=0, status="running", seed=seed,
+        params={**{k: v for k, v in p.items() if k != "seed"}, "oversample": OVERSAMPLE},
+        models=models_used,
+        data_sources={
+            "target_sequence": {"source": "UniProt", "accession": target.uniprot_id},
+            "seed_compounds": len(seed_rows), "registry_compounds": len(known_keys),
+            "reference_library": registry.REFERENCE_SOURCE,
+        },
+    )
+    db.add(run)
+    db.flush()
 
-            try:
-                if m.similar_drug is not None:
-                    similar_edge.insert({
-                        "_from": f"molecules/{mol_key}",
-                        "_to": f"drugs/{m.similar_drug.name.lower()}",
-                        "tanimoto": m.similar_drug.similarity,
-                        "semantic": m.similar_drug.semantic_similarity,
-                    })
-            except Exception:
-                pass
+    def fail(reason: str, exc: Exception):
+        run.status, run.error = "failed", reason
+        db.commit()
+        raise exc
 
-    except Exception as e:
-        print(f"[Arango] write failed (non-critical): {e}")
+    # 2) generate
+    gen = generator.generate(target.symbol, n * OVERSAMPLE, seed=seed, known_inchikeys=known_keys)
+    run.params = {**run.params, "generation": gen.params}
+
+    # 3) physicochemical filters
+    candidates: List[str] = []
+    rejected = 0
+    for smi in gen.smiles:
+        if passes_filters(chem.physchem(smi), p):
+            candidates.append(smi)
+        else:
+            rejected += 1
+    metrics: Dict = {"generation": gen.stats.as_dict(), "filtered_out_by_physchem": rejected,
+                     "candidates_scored": len(candidates)}
+
+    if not candidates:
+        run.status, run.metrics = "completed", metrics
+        run.num_molecules = 0
+        db.commit()
+        return _response(run, [])
+
+    # 4) DTI prediction - failures propagate (no placeholder scores)
+    try:
+        preds = scorer.predict(candidates, target.sequence, target.symbol)
+    except ScoringError as exc:
+        fail(str(exc), exc)
+    ranked = sorted(zip(candidates, preds), key=lambda x: x[1].kd_nm)[:n]     # lowest predicted Kd first
+
+    # 5) register + store predictions
+    selected: List[Dict] = []
+    for idx, (smi, pred) in enumerate(ranked):
+        comp, _ = registry.register_compound(
+            db, smi, origin=m.ORIGIN_GENERATED, source_db=registry.GENERATOR_SOURCE, external_id=f"{run.id}:{idx}",
+            generation_method=gen.stats.method, generation_run_id=run.id, note=f"seed={seed}",
+        )
+        pred_row = registry.record_prediction(
+            db, comp, target_symbol=target.symbol, uniprot_id=target.uniprot_id,
+            model_name=scorer_info["model_name"], model_version=scorer_info.get("model_version"),
+            value_nm=pred.kd_nm, run_id=run.id, params={"aggregation": scorer_info.get("aggregation")},
+        )
+        selected.append({"index": idx, "smiles": comp.canonical_smiles, "comp": comp, "pred": pred, "row": pred_row})
+
+    similarity_index.ensure_current(db)
+
+    # 6) comparison + persistence
+    response_mols: List[Molecule] = []
+    kg_items: List[Dict] = []
+    for item in selected:
+        comp, pred = item["comp"], item["pred"]
+        pc = chem.physchem(comp.canonical_smiles)
+        fp_neighbor, semantic_neighbor = find_combined_similar_drugs(comp.canonical_smiles)
+        note = [f"Computational DTI prediction for {target.symbol}: Kd ~ {pred.kd_nm:.3g} nM (pKd {pred.pkd:.2f})."]
+        if fp_neighbor is not None:
+            note.append(f"Closest named reference drug (Morgan Tanimoto): {fp_neighbor.name} ({fp_neighbor.similarity:.2f}).")
+        if semantic_neighbor is not None and semantic_neighbor.semantic_similarity is not None and (
+                fp_neighbor is None or semantic_neighbor.name != fp_neighbor.name):
+            note.append(f"ChemBERTa nearest: {semantic_neighbor.name} (cosine {semantic_neighbor.semantic_similarity:.2f}).")
+        note.append(f"Lipinski {'pass' if pc.lipinski_pass else 'fail'} ({pc.lipinski_violations} violations).")
+
+        db.add(m.MoleculeRecord(
+            run_id=run.id, compound_id=comp.id, smiles=comp.canonical_smiles, score=pred.normalised,
+            source="generated", notes=" ".join(note), scorer_used=scorer.name,
+            admet_mw=pc.mol_weight, admet_logp=pc.logp, admet_hbd=pc.hbd, admet_hba=pc.hba, admet_tpsa=pc.tpsa,
+            admet_rotatable_bonds=pc.rotatable_bonds, admet_lipinski_pass=int(pc.lipinski_pass),
+            admet_lipinski_violations=pc.lipinski_violations,
+            similar_drug_fp=fp_neighbor.name if fp_neighbor else None,
+            tanimoto_fp=fp_neighbor.similarity if fp_neighbor else None,
+            similar_drug_semantic=semantic_neighbor.name if semantic_neighbor else None,
+            tanimoto_semantic=semantic_neighbor.semantic_similarity if semantic_neighbor else None,
+        ))
+        response_mols.append(Molecule(
+            smiles=comp.canonical_smiles, score=pred.normalised, source=scorer.name, notes=" ".join(note),
+            similar_drug=fp_neighbor, similar_drug_semantic=semantic_neighbor, admet=_physchem_schema(pc),
+            compound_id=comp.id, origin=comp.origin, predicted_kd_nm=pred.kd_nm, pkd=pred.pkd,
+            model=scorer_info["model_name"], nearest_known=_nearest_known(db, comp.canonical_smiles, comp.id),
+        ))
+        kg_items.append({
+            "index": item["index"], "compound_id": comp.id, "smiles": comp.canonical_smiles, "kd_nm": pred.kd_nm,
+            "pkd": pred.pkd, "score": pred.normalised,
+            "similar_drug": fp_neighbor.name if fp_neighbor else None,
+            "tanimoto_fp": fp_neighbor.similarity if fp_neighbor else None,
+            "semantic": semantic_neighbor.semantic_similarity if semantic_neighbor else None,
+        })
+
+    run.num_molecules = len(response_mols)
+    run.status = "completed"
+    metrics["returned"] = len(response_mols)
+    run.metrics = metrics
+    db.flush()
+
+    # legacy SQL knowledge graph (kept for existing pages)
+    try:
+        attach_run_to_kg(db, run, response_mols)
+    except Exception:
+        log.exception("Legacy SQL KG attach failed")
+    db.commit()
+
+    # 8) ArangoDB: failure is recorded on the run, never silent
+    from . import kg_sync
+    try:
+        arango = kg_sync.get_arango()
+        kg_sync.sync_target(arango, target.symbol, with_pathways=False)
+        kg_sync.sync_run(db, arango, run, kg_items)
+        run.metrics = {**run.metrics, "knowledge_graph": {"status": "ok"}}
+    except kg_sync.KGDisabled as exc:
+        run.metrics = {**run.metrics, "knowledge_graph": {"status": "disabled", "reason": str(exc)}}
+    except Exception as exc:
+        log.exception("ArangoDB sync failed for run %s", run.id)
+        run.metrics = {**run.metrics, "knowledge_graph": {"status": "failed", "error": str(exc)}}
+    db.commit()
+    return _response(run, response_mols)
 
 
-    # 6) Return response
+def _response(run: m.DiscoveryRun, molecules: List[Molecule]) -> DiscoveryResponse:
     return DiscoveryResponse(
-        run_id=cast(str, run_record.id),
-        target_id=cast(str, run_record.target_id),
-        num_molecules=cast(int, run_record.num_molecules),
-        molecules=molecules,
+        run_id=run.id, target_id=run.target_id, num_molecules=len(molecules), molecules=molecules,
+        status=run.status, seed=run.seed, params=run.params, models=run.models,
+        data_sources=run.data_sources, metrics=run.metrics,
     )

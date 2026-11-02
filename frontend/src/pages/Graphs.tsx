@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { Database as LibraryIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { 
   Activity,
@@ -133,6 +134,7 @@ export default function Graphs() {
               <SidebarItem icon={Home} label="Home" to="/" />
               <SidebarItem icon={Activity} label="Runs" to="/discovery" />
               <SidebarItem icon={Compass} label="Discovery" to="/dashboard" />
+              <SidebarItem icon={LibraryIcon} label="Library" to="/library" />
               <SidebarItem icon={BarChart3} label="Graphs" to="/graphs" active />
               <SidebarItem icon={Bot} label="Agent" to="/agent" />
               <SidebarItem icon={Microscope} label="Analysis" to="/analysis" />

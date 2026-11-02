@@ -14,15 +14,21 @@ export interface SimilarDrug {
 export interface Molecule {
   smiles: string; score: number; source: string; notes: string | null;
   similar_drug: SimilarDrug | null; similar_drug_semantic: SimilarDrug | null;
-  admet: ADMET | null;
+  admet: ADMET | null;   // basic RDKit physicochemical descriptors (not ADMET predictions)
+  compound_id?: number | null; origin?: string | null;
+  evidence_type?: string;            // always "computational_prediction"
+  predicted_kd_nm?: number | null; pkd?: number | null; units?: string; model?: string | null;
 }
 
 /* ─── Discovery ─────────────────────────────────────────────────────────── */
 export interface DiscoverRequest {
-  target_id: string; num_molecules: number; lipinski_only?: boolean;
+  target_id: string; num_molecules: number; lipinski_only?: boolean; seed?: number;
+  min_mw?: number; max_mw?: number; min_logp?: number; max_logp?: number;
+  max_tpsa?: number; max_hbd?: number; max_hba?: number; max_rotatable_bonds?: number;
 }
 export interface DiscoverResponse {
   run_id: string; target_id: string; num_molecules: number; molecules: Molecule[];
+  status?: string; seed?: number | null; params?: any; models?: any; data_sources?: any; metrics?: any;
 }
 
 /* ─── Batch discovery ───────────────────────────────────────────────────── */
@@ -36,6 +42,7 @@ export interface BatchDiscoverResponse {
 /* ─── Runs ──────────────────────────────────────────────────────────────── */
 export interface RunSummary {
   run_id: string; target_id: string; num_molecules: number; created_at: string;
+  status?: string | null; seed?: number | null;
 }
 export interface RunsListResponse { runs: RunSummary[]; }
 

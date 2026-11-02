@@ -73,7 +73,7 @@ CANDIDATE_LIBRARY: List[Candidate] = [
     {"name": "Lidocaine", "smiles": "CCN(CC)CC(=O)N1CCN(CC1)C2=CC=CC=C2"},
     {"name": "Morphine_frag", "smiles": "OC1=CC2=C(C=C1)C3CC4N(CCC34)CC2"},
     {"name": "Theophylline", "smiles": "Cn1cnc2c1c(=O)[nH]c(=O)n2C"},
-    {"name": "Theobromine", "smiles": "Cn1cnc2c1c(=O)[nH]c(=O)n2"},
+    {"name": "Theobromine", "smiles": "Cn1cnc2c1c(=O)[nH]c(=O)n2C"},
     {"name": "Chloroquine_frag", "smiles": "CCN(CC)CCCC(C)NC1=CC=NC2=CC(Cl)=CC=C21"},
     {"name": "Hydroxychloroquine_frag", "smiles": "CCN(CCO)CCCC(C)NC1=CC=NC2=CC(Cl)=CC=C21"},
     {"name": "Dexamethasone_frag", "smiles": "CC1CC2C3CCC4=CC(=O)C=CC4(C)C3(F)C(O)CC2(C)C1(O)C(=O)CO"},

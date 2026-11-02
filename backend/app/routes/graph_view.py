@@ -1,7 +1,10 @@
 #C:\Users\Aabidha\Desktop\PROJECTS\elysium\elysium\backend\app\routes\graph_view.py
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
+import logging
 from app.arangodb_client import get_arango_db
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/graph-view", tags=["graph"])
 
@@ -94,7 +97,10 @@ def get_target_graph_view(target_id: str, depth: int = Query(2, ge=1, le=5)):
                             _key:  e._key,
                             _from: e._from,
                             _to:   e._to,
-                            type:  "binds"
+                            type:  "binds",
+                            evidence_type: e.evidence_type,
+                            predicted_kd_nm: e.predicted_kd_nm,
+                            model: e.model
                         }
                     }
             """,
@@ -117,6 +123,34 @@ def get_target_graph_view(target_id: str, depth: int = Query(2, ge=1, le=5)):
             mol_ids.append(mol["_id"])
         if edge.get("_from") and edge.get("_to"):
             edges.append(edge)
+
+    # ── 2b. Experimentally measured compounds (ChEMBL / BindingDB) ──────
+    try:
+        cur = db.aql.execute(
+            """
+            FOR e IN binds
+                FILTER e._to == @tid AND e.evidence_type == "experimental"
+                SORT e.best_value_nm ASC
+                LIMIT 25
+                FOR c IN compounds
+                    FILTER c._id == e._from
+                    RETURN {
+                        node: { id: c._id, _id: c._id, _key: c._key, smiles: c.smiles,
+                                name: c.name, origin: c.origin, type: "compounds" },
+                        edge: { id: e._id, _id: e._id, _key: e._key, _from: e._from, _to: e._to,
+                                type: "binds", evidence_type: e.evidence_type,
+                                best_value_nm: e.best_value_nm, best_type: e.best_type,
+                                n_measurements: e.n_measurements }
+                    }
+            """,
+            bind_vars={"tid": target_arango_id},
+        )
+        for row in cur:
+            node, edge = dict(row["node"]), dict(row["edge"])
+            nodes[node["_id"]] = node
+            edges.append(edge)
+    except Exception as exc:
+        log.warning("Experimental compound query failed: %s", exc)
 
     # ── 3. Similar drugs ─────────────────────────────────────────────────
     if mol_ids and depth >= 2:

@@ -102,7 +102,7 @@ const Marquee = () => {
     "DRUG DISCOVERY",
     "MOLECULAR AI",
     "TARGET BINDING",
-    "ADMET PROFILING",
+    "PHYSICOCHEMICAL PROFILING",
     "KNOWLEDGE GRAPHS",
     "ELYSIUM",
   ];
@@ -141,7 +141,7 @@ const FeaturesSection = () => {
   const features = [
     {
       title: "Agentic Pipeline",
-      description: "ELYSIUM orchestrates a multi-step agent pipeline: generate scaffolds, score with DeepPurpose, filter by ADMET, and surface the best candidates automatically.",
+      description: "ELYSIUM orchestrates a multi-step agent pipeline: generate scaffolds, score with DeepPurpose, filter by physicochemical properties, and surface the best candidates automatically.",
     },
     {
       title: "Knowledge Graph",
@@ -249,7 +249,7 @@ const ScienceSection = () => {
     { label: "Target", text: "Target protein is identified and passed to the molecule generation pipeline." },
     { label: "Generation", text: "RDKit generates diverse candidate scaffolds with structural variation." },
     { label: "Scoring", text: "DeepPurpose predicts binding affinity (DTI score) for each candidate." },
-    { label: "ADMET", text: "RDKit ADMET filter checks Lipinski rule-of-five, logP, TPSA and toxicity." },
+    { label: "Physicochemical", text: "RDKit physicochemical filters check Lipinski rule-of-five, logP and TPSA. No toxicity or Physicochemical prediction is made." },
     { label: "Similarity", text: "Fingerprint and ChemBERTa similarity links each molecule to known drugs." },
     { label: "Output", text: "Top candidates are ranked, stored, and surfaced in the ELYSIUM dashboard." },
   ];
@@ -380,7 +380,7 @@ const ScienceSection = () => {
 const AdvantagesSection = () => {
   const advantages = [
     { id: "01", title: "Agentic Molecule Discovery" },
-    { id: "02", title: "ADMET-Filtered Candidates" },
+    { id: "02", title: "Property-Filtered Candidates" },
     { id: "03", title: "LLM-Augmented Analysis" },
   ];
 
@@ -569,7 +569,7 @@ export default function LandingPage() {
                   Agentic AI Drug Discovery Platform
                 </h2>
                 <p className="text-[13px] md:text-[15px] leading-relaxed opacity-70 max-w-3xl md:pt-1">
-                  ELYSIUM generates candidate molecules, scores binding affinity, filters via ADMET, and surfaces the most drug-like candidates powered by a multi-agent pipeline.
+                  ELYSIUM generates candidate molecules, scores binding affinity, filters by physicochemical properties, and surfaces the most drug-like candidates powered by a multi-agent pipeline.
                 </p>
               </div>
             </div>

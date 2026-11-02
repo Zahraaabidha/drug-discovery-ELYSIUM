@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Database as LibraryIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { 
   Activity,
@@ -22,6 +23,7 @@ import {
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { discoverMolecules, listRuns } from "../api/elysium";
+import { errorMessage, getSupportedTargets } from "../api/library";
 import type { RunSummary } from "../api/elysium";
 import { API_BASE_URL } from "../api/client";
 import type { Molecule } from "../api/elysium";
@@ -84,7 +86,7 @@ const MolResultCard: React.FC<{ m: any; rank: number; target: string }> = ({ m, 
           </div>
           <span className={`text-[11px] font-bold w-10 text-right ${scoreColor}`}>{m.score.toFixed(3)}</span>
         </div>
-        <button onClick={() => setExpanded(!expanded)}
+        <button aria-label={expanded ? "Hide details" : "Show details"} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}
           className="w-7 h-7 rounded-lg bg-black/5 hover:bg-black/10 flex items-center justify-center transition-colors flex-shrink-0">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
             className={`transition-transform ${expanded ? "rotate-180" : ""}`}>
@@ -107,7 +109,7 @@ const MolResultCard: React.FC<{ m: any; rank: number; target: string }> = ({ m, 
             )}
             <div className="flex-1 min-w-0 space-y-3">
               <div>
-                <p className="text-[9px] font-bold tracking-widests uppercase opacity-30 mb-1.5">Binding Score</p>
+                <p className="text-[9px] font-bold tracking-widests uppercase opacity-30 mb-1.5">Predicted binding (normalised pKd, computational)</p>
                 <div className="flex items-center gap-3">
                   <div className="flex-1 h-1.5 bg-black/10 rounded-full overflow-hidden">
                     <div className={`h-full ${barColor} rounded-full`} style={{width: `${m.score * 100}%`}}/>
@@ -115,6 +117,20 @@ const MolResultCard: React.FC<{ m: any; rank: number; target: string }> = ({ m, 
                   <span className={`text-sm font-bold ${scoreColor}`}>{m.score.toFixed(3)}</span>
                 </div>
               </div>
+              {m.predicted_kd_nm != null && (
+                <p className="text-xs" data-testid="predicted-kd">
+                  Predicted Kd <b>{m.predicted_kd_nm >= 100 ? m.predicted_kd_nm.toFixed(0) : m.predicted_kd_nm.toPrecision(3)} nM</b>
+                  {m.pkd != null && <span className="opacity-50"> (pKd {m.pkd.toFixed(2)})</span>}
+                  <span className="ml-2 text-[9px] font-bold uppercase tracking-widest text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                    Model prediction · not experimentally confirmed
+                  </span>
+                </p>
+              )}
+              {m.compound_id != null && (
+                <Link to={`/library/${m.compound_id}`} className="inline-block text-[9px] font-bold uppercase tracking-widest underline">
+                  {m.origin === "generated" ? "Generated molecule" : "Compound"} · open in library →
+                </Link>
+              )}
               {m.similar_drug && (
                 <div className="flex items-center gap-3">
                   <p className="text-[9px] font-bold tracking-widests uppercase opacity-30 w-20 flex-shrink-0">Similar To</p>
@@ -157,7 +173,12 @@ const MolResultCard: React.FC<{ m: any; rank: number; target: string }> = ({ m, 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [lipinski, setLipinski] = useState(true);
-  const [admet, setAdmet] = useState(false);
+  const [maxMw, setMaxMw] = useState("");
+  const [maxLogp, setMaxLogp] = useState("");
+  const [maxTpsa, setMaxTpsa] = useState("");
+  const [seed, setSeed] = useState("");
+  const [targets, setTargets] = useState<string[]>([]);
+  const [meta, setMeta] = useState<{ seed?: number | null; metrics?: any; models?: any } | null>(null);
   const [targetInput, setTargetInput] = useState("EGFR");
   const [molCount, setMolCount] = useState(7);
   const [loading, setLoading] = useState(false);
@@ -170,20 +191,27 @@ export default function Dashboard() {
     listRuns().then(d => setRecentRuns(d.runs.slice(0, 5))).catch(console.error);
   }, [runId]);
 
+  useEffect(() => {
+    getSupportedTargets().then(t => setTargets(t.map(x => x.symbol))).catch(() => setTargets([]));
+  }, []);
+
   const handleRun = async () => {
     setLoading(true);
     setError(null);
     setResults([]);
     try {
+      const num = (v: string) => (v.trim() === "" ? undefined : Number(v));
       const res = await discoverMolecules({
         target_id: targetInput,
         num_molecules: molCount,
         lipinski_only: lipinski,
+        max_mw: num(maxMw), max_logp: num(maxLogp), max_tpsa: num(maxTpsa), seed: num(seed),
       });
       setRunId(res.run_id);
       setResults(res.molecules);
+      setMeta({ seed: res.seed, metrics: res.metrics, models: res.models });
     } catch (e: any) {
-      setError(e?.message || "Discovery failed");
+      setError(errorMessage(e) || "Discovery failed");
     } finally {
       setLoading(false);
     }
@@ -207,6 +235,7 @@ export default function Dashboard() {
               <SidebarItem icon={Home} label="Home" to="/" />
               <SidebarItem icon={Activity} label="Runs" to="/discovery" />
               <SidebarItem icon={Compass} label="Discovery" to="/dashboard" active />
+              <SidebarItem icon={LibraryIcon} label="Library" to="/library" />
               <SidebarItem icon={BarChart3} label="Graphs" to="/graphs" />
               <SidebarItem icon={Bot} label="Agent" to="/agent" />
               <SidebarItem icon={Microscope} label="Analysis" to="/analysis" />
@@ -308,12 +337,9 @@ export default function Dashboard() {
               <div className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold tracking-widest uppercase opacity-40">Target Identifier</label>
-                  <input 
-                    type="text"
-                    value={targetInput}
-                    onChange={e => setTargetInput(e.target.value)}
-                    className="w-full bg-[#F8F9FA] border border-black/5 rounded-xl py-2 px-3 text-xs font-medium focus:outline-none focus:border-black/10 transition-all"
-                  />
+                  <select aria-label="Target" value={targetInput} onChange={e => setTargetInput(e.target.value)} className="w-full bg-[#F8F9FA] border border-black/5 rounded-xl py-2 px-3 text-xs font-medium focus:outline-none focus:border-black/10 transition-all">
+                    {(targets.length ? targets : [targetInput]).map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold tracking-widest uppercase opacity-40">Molecule Count</label>
@@ -341,14 +367,14 @@ export default function Dashboard() {
                       <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${lipinski ? 'left-5.5' : 'left-0.5'}`} />
                     </button>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-medium opacity-60">ADMET</span>
-                    <button 
-                      onClick={() => setAdmet(!admet)}
-                      className={`w-10 h-5 rounded-full transition-all relative ${admet ? 'bg-purple-500' : 'bg-black/10'}`}
-                    >
-                      <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${admet ? 'left-5.5' : 'left-0.5'}`} />
-                    </button>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([["Max MW", maxMw, setMaxMw, "mw"], ["Max logP", maxLogp, setMaxLogp, "logp"], ["Max TPSA", maxTpsa, setMaxTpsa, "tpsa"], ["Seed", seed, setSeed, "seed"]] as const).map(([label, val, setter, key]) => (
+                      <label key={key} className="space-y-1">
+                        <span className="text-[9px] font-bold tracking-widest uppercase opacity-40">{label}</span>
+                        <input type="number" aria-label={label} value={val} placeholder={key === "seed" ? "random" : "any"} onChange={e => setter(e.target.value)}
+                          className="w-full bg-[#F8F9FA] border border-black/5 rounded-xl py-1.5 px-2 text-xs font-medium focus:outline-none focus:border-black/10" />
+                      </label>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -393,9 +419,18 @@ export default function Dashboard() {
                 <h3 className="text-xl font-display font-medium">Results</h3>
                 <span className="text-xs font-medium opacity-40">{results.length} molecules</span>
               </div>
+              {meta?.metrics?.generation && (
+                <p data-testid="run-metrics" className="text-[10px] opacity-50 -mt-4 mb-6">
+                  Seed {meta.seed} · validity {(meta.metrics.generation.validity * 100).toFixed(0)}% · uniqueness {(meta.metrics.generation.uniqueness * 100).toFixed(0)}% ·
+                  novelty vs. registry {(meta.metrics.generation.novelty * 100).toFixed(0)}% · {meta.metrics.filtered_out_by_physchem ?? 0} rejected by filters.
+                  {" "}Molecules are newly generated and scored by {meta.models?.dti?.model_name ?? "the DTI model"} (computational predictions).
+                </p>
+              )}
               {results.length === 0 && !loading ? (
                 <div className="flex-1 flex items-center justify-center border-2 border-dashed border-black/5 rounded-[32px]">
-                  <p className="text-xs font-medium opacity-20">Run discovery to populate agent-ranked candidates.</p>
+                  <p className="text-xs font-medium opacity-20">
+                    {runId ? "No generated molecule satisfied the selected filters. Relax a constraint and run again." : "Run discovery to populate agent-ranked candidates."}
+                  </p>
                 </div>
               ) : loading ? (
                 <div className="flex-1 flex items-center justify-center">
@@ -465,7 +500,7 @@ export default function Dashboard() {
             {[
               "Sample candidate scaffolds",
               "Score binding with DeepPurpose",
-              "Apply RDKit ADMET filters",
+              "Apply RDKit physicochemical filters",
               "Attach nearest-known drug context"
             ].map((step, i) => (
               <div key={i} className="flex items-center gap-4 group">

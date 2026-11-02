@@ -1,13 +1,13 @@
-"""
-DeepPurpose-based DTI (drug-target interaction) scoring for ELYSIUM.
+"""DeepPurpose DTI prediction (pretrained BindingDB ensemble).
 
-Wraps DeepPurpose.oneliner.virtual_screening with the pretrained BindingDB
-ensemble. The oneliner returns None and writes its results to disk, and it
-expects numpy arrays of equal length for drugs / targets (one row per pair),
-so we build the pairs ourselves and read the aggregated predictions back
-from the pickle it writes into a private temp directory.
+DeepPurpose's oneliner returns None, writes results to disk and needs numpy arrays
+with one row per drug-target pair, so predictions are read back from the pickle it
+writes into a private temp directory. Output is the ensemble-mean predicted Kd in nM.
 """
+from __future__ import annotations
 
+import logging
+import math
 import os
 import pickle
 import shutil
@@ -17,22 +17,47 @@ from typing import List
 
 import numpy as np
 
+from .scoring import DTIResult
+
+log = logging.getLogger(__name__)
+
 BACKEND_DIR = Path(__file__).resolve().parents[2]
-PRETRAINED_DIR = BACKEND_DIR / "save_folder" / "pretrained_models" / "DeepPurpose_BindingDB"
+PRETRAINED_DIR = Path(os.getenv("DEEPPURPOSE_MODEL_DIR", BACKEND_DIR / "save_folder" / "pretrained_models" / "DeepPurpose_BindingDB"))
+MODEL_NAME = "DeepPurpose BindingDB pretrained ensemble (mean of members)"
 
 
-def kd_nm_to_score(kd_nm: float) -> float:
-    """Convert a predicted Kd (nM) to a 0-1 score via pKd (pKd 10 -> 1.0)."""
+def kd_to_result(smiles: str, kd_nm: float) -> DTIResult:
     kd_nm = max(float(kd_nm), 1e-6)
-    pkd = 9.0 - np.log10(kd_nm)
-    return float(min(max(pkd / 10.0, 0.0), 1.0))
+    pkd = 9.0 - math.log10(kd_nm)
+    return DTIResult(smiles=smiles, kd_nm=kd_nm, pkd=pkd, normalised=float(min(max(pkd / 10.0, 0.0), 1.0)))
 
 
 class DeepPurposeScreeningModel:
-    def score(self, smiles_list: List[str], target_sequence: str, target_id: str) -> List[float]:
+    def model_info(self) -> dict:
+        try:
+            import DeepPurpose  # noqa: F401
+            from importlib.metadata import version
+            dp_version = version("DeepPurpose")
+        except Exception:
+            dp_version = None
+        members = sorted(p.name for p in PRETRAINED_DIR.glob("model_*")) if PRETRAINED_DIR.exists() else []
+        return {
+            "model_name": MODEL_NAME,
+            "model_version": dp_version,
+            "members": members,
+            "aggregation": "mean",
+            "output": "predicted Kd (nM)",
+            "training_data": "BindingDB (pretrained weights distributed with DeepPurpose)",
+        }
+
+    def predict(self, smiles_list: List[str], target_sequence: str, target_id: str) -> List[DTIResult]:
         if not smiles_list:
             return []
-
+        if not PRETRAINED_DIR.exists():
+            raise FileNotFoundError(
+                f"DeepPurpose pretrained models not found at {PRETRAINED_DIR}. "
+                "Set DEEPPURPOSE_MODEL_DIR or download them (see README)."
+            )
         from DeepPurpose import oneliner
 
         n = len(smiles_list)
@@ -53,6 +78,6 @@ class DeepPurposeScreeningModel:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-        if len(kd) != n:
-            raise RuntimeError(f"DeepPurpose returned {len(kd)} predictions for {n} molecules")
-        return [kd_nm_to_score(v) for v in kd]
+        if len(kd) != n or not np.all(np.isfinite(kd)):
+            raise RuntimeError(f"DeepPurpose returned {len(kd)} predictions for {n} molecules (or non-finite values)")
+        return [kd_to_result(s, v) for s, v in zip(smiles_list, kd)]

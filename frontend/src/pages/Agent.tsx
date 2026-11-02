@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { Database as LibraryIcon } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Activity, Compass, BarChart3, Bot, Microscope, Home,
@@ -143,7 +144,7 @@ const SESSION_KEY = "elysium_agent_session";
 
 const CHIPS = [
   { icon: Scale,        label: "Compare",      query: "What are the top 3 molecules for EGFR by binding score?" },
-  { icon: ShieldAlert,  label: "Troubleshoot", query: "Show ADMET stats for EGFR" },
+  { icon: ShieldAlert,  label: "Troubleshoot", query: "Show physicochemical stats for EGFR" },
   { icon: HeartPulse,   label: "Health",       query: "Which molecules are most similar to Aspirin?" },
   { icon: CheckCircle2, label: "Fact Check",   query: "Summarise all discovery runs so far" },
   { icon: FileText,     label: "Summarize",    query: "What molecules have Lipinski violations?" },
@@ -223,6 +224,7 @@ export default function Agent() {
               <SidebarItem icon={Home}      label="Home"      to="/" />
               <SidebarItem icon={Activity}  label="Runs"      to="/discovery" />
               <SidebarItem icon={Compass}   label="Discovery" to="/dashboard" />
+              <SidebarItem icon={LibraryIcon} label="Library" to="/library" />
               <SidebarItem icon={BarChart3} label="Graphs"    to="/graphs" />
               <SidebarItem icon={Bot}       label="Agent"     to="/agent" active />
               <SidebarItem icon={Microscope}label="Analysis"  to="/analysis" />

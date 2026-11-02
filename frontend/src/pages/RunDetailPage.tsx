@@ -105,10 +105,10 @@ const MolCard: React.FC<{ m: Molecule; rank: number; target: string }> = ({ m, r
         </div>
       </div>
 
-      {/* Expanded ADMET */}
+      {/* Expanded physicochemical */}
       {expanded && m.admet && (
         <div className="border-t border-black/5 px-6 py-4 bg-[#F8F9FA]">
-          <p className="text-[10px] font-bold tracking-widests uppercase opacity-30 mb-3">ADMET Profile</p>
+          <p className="text-[10px] font-bold tracking-widests uppercase opacity-30 mb-3">Physicochemical Profile</p>
           <div className="flex flex-wrap gap-2 mb-3">
             {[
               { label: "MW", value: `${m.admet.molecular_weight.toFixed(1)} Da` },
@@ -162,7 +162,7 @@ const RunDetailPage: React.FC = () => {
   const reasoningSteps = [
     "Planner decomposed request into generate → score → persist",
     "DeepPurpose attempted binding predictions; stub fallback available",
-    "RDKit ADMET summary attached to each candidate",
+    "RDKit physicochemical summary attached to each candidate",
     "Similarity + KG edges persisted for subsequent analyses",
   ];
 
@@ -213,6 +213,18 @@ const RunDetailPage: React.FC = () => {
 
       {/* Main */}
       <main className="flex-1 flex flex-col gap-6 min-w-0">
+        {run?.status === "legacy_unverified" && (
+          <div role="alert" data-testid="legacy-banner" className="rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 text-xs px-5 py-4">
+            <b>Legacy run - not scientific evidence.</b> {run.metrics?.note ?? "Created before the compound registry; molecules were sampled from the reference library and scores may be placeholders."}
+          </div>
+        )}
+        {run && run.status !== "legacy_unverified" && run.models?.dti && (
+          <details data-testid="run-provenance" className="rounded-2xl border border-black/5 bg-white text-xs px-5 py-3">
+            <summary className="cursor-pointer font-bold">Run provenance · seed {run.seed ?? "n/a"} · {run.models.dti.model_name}</summary>
+            <pre className="mt-3 overflow-x-auto text-[10px] bg-[#F8F9FA] rounded-xl p-3">{JSON.stringify({ params: run.params, models: run.models, data_sources: run.data_sources, metrics: run.metrics }, null, 2)}</pre>
+            <p className="mt-2 opacity-60">Scores are computational DTI predictions (predicted Kd, nM). They are not experimentally confirmed interactions.</p>
+          </details>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>

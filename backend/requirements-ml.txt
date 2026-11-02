@@ -4,4 +4,6 @@ scikit-learn
 prettytable
 subword-nmt
 descriptastorus
+six
+pandas-flavor
 DeepPurpose==0.1.5

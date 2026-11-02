@@ -4,6 +4,7 @@ load_dotenv()
 from rdkit import RDLogger
 RDLogger.DisableLog("rdApp.*")  # silence noisy RDKit parse warnings
 import os
+import logging
 import datetime as dt
 import csv
 import io
@@ -37,17 +38,35 @@ from .services.kg import get_target_graph, get_drug_graph
 from app.routes.molecule_image import router as molecule_image_router
 from app.routes import graph_view
 
-Base.metadata.create_all(bind=engine)
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
+                    format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+log = logging.getLogger("elysium")
+
+
+def _bootstrap_database():
+    """Apply Alembic migrations and make sure the reference collections are in the registry."""
+    from .migrate import upgrade_to_head
+    from .db import SessionLocal
+    from .services import registry
+    upgrade_to_head()
+    with SessionLocal() as session:
+        if session.query(models.Compound).count() == 0:
+            registry.import_reference_collections(session)
+
+
+_bootstrap_database()
 
 
 def _bootstrap_arango():
     """Create the Arango schema/graph and seed the KG; never block API startup."""
+    if os.getenv("ELYSIUM_DISABLE_ARANGO") == "1":
+        return
     try:
         from .kg_seed import seed_basic_kg
         seed_basic_kg()
-        print("[Arango] schema + knowledge graph ready")
+        log.info("[Arango] schema + knowledge graph ready")
     except Exception as e:
-        print(f"[Arango] bootstrap skipped: {e}")
+        log.warning("[Arango] bootstrap skipped: %s", e)
 
 
 _bootstrap_arango()
@@ -88,6 +107,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import Request
+from .routes import library as library_routes
+from .services.chem import InvalidMolecule
+from .services.scoring import ScoringError
+from .services.sources.http import ExternalServiceError
+from .services.targets import UnsupportedTarget, supported_targets
+from .services.embeddings import EmbeddingUnavailable
+
+
+@app.exception_handler(UnsupportedTarget)
+async def _unsupported_target(request: Request, exc: UnsupportedTarget):
+    return JSONResponse({"detail": str(exc), "supported_targets": exc.supported}, status_code=422)
+
+
+@app.exception_handler(InvalidMolecule)
+async def _invalid_molecule(request: Request, exc: InvalidMolecule):
+    return JSONResponse({"detail": str(exc)}, status_code=422)
+
+
+@app.exception_handler(ScoringError)
+async def _scoring_error(request: Request, exc: ScoringError):
+    return JSONResponse({"detail": str(exc), "error": "dti_prediction_failed"}, status_code=502)
+
+
+@app.exception_handler(ExternalServiceError)
+async def _external_error(request: Request, exc: ExternalServiceError):
+    return JSONResponse({"detail": str(exc), "service": exc.service, "error": "external_service_unavailable"}, status_code=502)
+
+
+@app.exception_handler(EmbeddingUnavailable)
+async def _embedding_error(request: Request, exc: EmbeddingUnavailable):
+    return JSONResponse({"detail": str(exc), "error": "embedding_unavailable"}, status_code=503)
+
+
+app.include_router(library_routes.router)
+app.include_router(library_routes.eval_router)
 app.include_router(molecule_image_router)
 app.include_router(graph_view.router)
 
@@ -162,6 +217,8 @@ def list_runs(db: Session = Depends(get_db)):
             target_id=cast(str, run.target_id),
             num_molecules=cast(int, run.num_molecules),
             created_at=cast(dt.datetime, run.created_at),
+            status=run.status,
+            seed=run.seed,
         )
         for run in runs
     ]
@@ -229,6 +286,10 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
                 semantic_similarity=m.tanimoto_semantic,
             )
 
+        pred = None
+        if m.compound_id is not None:
+            pred = (db.query(models.Prediction)
+                    .filter_by(compound_id=m.compound_id, run_id=run.id).first())
         mol_objs.append(
             MoleculeSchema(
                 smiles=m.smiles,
@@ -238,6 +299,11 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
                 similar_drug=fp_neighbor,
                 similar_drug_semantic=sem_neighbor,
                 admet=admet,
+                compound_id=m.compound_id,
+                origin="generated" if m.compound_id is not None else None,
+                predicted_kd_nm=pred.value if pred else None,
+                pkd=pred.pkd if pred else None,
+                model=pred.model_name if pred else None,
             )
         )
 
@@ -246,7 +312,16 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
         target_id=cast(str, run.target_id),
         num_molecules=cast(int, run.num_molecules),
         molecules=mol_objs,
+        status=run.status, seed=run.seed, params=run.params, models=run.models,
+        data_sources=run.data_sources, metrics=run.metrics,
     )
+
+
+@app.get("/targets")
+def list_targets():
+    """Targets the DTI model supports. Requests for any other target are rejected (HTTP 422)."""
+    from .services.targets import resolve_target
+    return [{"symbol": s, "uniprot_id": resolve_target(s).uniprot_id} for s in supported_targets()]
 
 
 @app.get("/runs/{run_id}/export")

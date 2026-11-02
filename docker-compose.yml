@@ -35,8 +35,10 @@ services:
       CORS_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
     volumes:
       - ./backend/save_folder:/app/save_folder
-      - backend_data:/data
+      # use the project's existing SQLite database (31 legacy runs + registry) instead of an empty volume
+      - ./backend/elysium.db:/data/elysium.db
       - model_cache:/app/.hf_cache
+      - index_data:/app/index_data
 
   frontend:
     build:
@@ -53,5 +55,5 @@ services:
 
 volumes:
   arango_data:
-  backend_data:
   model_cache:
+  index_data:

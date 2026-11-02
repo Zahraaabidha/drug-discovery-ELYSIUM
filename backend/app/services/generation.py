@@ -1,63 +1,75 @@
-#C:\Users\Aabidha\Desktop\PROJECTS\elysium\elysium\backend\app\services\generation.py
+"""Molecule generation.
+
+MutationGenerator builds NEW structures from seed molecules with RDKit (functional-group edits
+and BRICS fragment recombination). Every returned molecule has been validated, standardised,
+de-duplicated and checked against the known-compound set, so reference compounds are never
+returned as "generated". If fewer than the requested number of novel molecules can be found
+the generator returns fewer - it never pads with library molecules.
 """
-Molecule generation backends for ELYSIUM.
+from __future__ import annotations
 
-We define a common interface:
-    generate(target_id, num_molecules) -> List[SMILES]
-
-For now we provide:
-  - LibraryGenerator: samples from a small drug-like library.
-
-Later you can add:
-  - TamGenGenerator: wraps TamGen or other Transformer.
-  - HybridGenerator: library + mutation, etc.
-"""
-
-from typing import List, Protocol
+import logging
 import random
+import threading
+from dataclasses import dataclass, field, asdict
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 from rdkit import Chem
 from rdkit.Chem import AllChem, BRICS, Descriptors
 
-from ..data.candidate_library import CANDIDATE_LIBRARY
+from . import chem
+
+log = logging.getLogger(__name__)
+_GLOBAL_RANDOM_LOCK = threading.Lock()   # BRICSBuild shuffles with the global `random` module
+
+METHOD_NAME = "rdkit_mutation_brics"
 
 
-class GeneratorBackend(Protocol):
-    def generate(self, target_id: str, num_molecules: int) -> List[str]:
-        ...
+@dataclass
+class GenerationStats:
+    method: str = METHOD_NAME
+    requested: int = 0
+    attempted: int = 0          # candidate strings produced
+    valid: int = 0              # parsed + standardised
+    filtered_size: int = 0      # valid but outside the MW window
+    unique: int = 0             # distinct InChIKeys among accepted-valid
+    novel: int = 0              # unique and absent from the known-compound set
+    returned: int = 0
+    exhausted: bool = False     # stopped at the attempt cap before reaching `requested`
+
+    @property
+    def validity(self) -> Optional[float]:
+        return self.valid / self.attempted if self.attempted else None
+
+    @property
+    def uniqueness(self) -> Optional[float]:
+        return self.unique / self.valid if self.valid else None
+
+    @property
+    def novelty(self) -> Optional[float]:
+        return self.novel / self.unique if self.unique else None
+
+    def as_dict(self) -> Dict:
+        d = asdict(self)
+        d.update(validity=self.validity, uniqueness=self.uniqueness, novelty=self.novelty)
+        return d
 
 
-class LibraryGenerator:
-    """Samples valid SMILES from the predefined drug-like library."""
-
-    def __init__(self) -> None:
-        self._base_smiles = self._load_valid_smiles()
-
-    def _load_valid_smiles(self) -> List[str]:
-        smiles_list: List[str] = []
-        for entry in CANDIDATE_LIBRARY:
-            smi = entry.get("smiles")
-            if smi and Chem.MolFromSmiles(smi) is not None:
-                smiles_list.append(smi)
-        if not smiles_list:
-            smiles_list = ["CCO", "CC(=O)O", "CCN(CC)CC"]
-        return smiles_list
-
-    def generate(self, target_id: str, num_molecules: int) -> List[str]:
-        if num_molecules <= 0:
-            return []
-        return [random.choice(self._base_smiles) for _ in range(num_molecules)]
+@dataclass
+class GenerationResult:
+    smiles: List[str]
+    stats: GenerationStats
+    params: Dict = field(default_factory=dict)
 
 
-class MutationGenerator(LibraryGenerator):
-    """
-    Generates NOVEL molecules from the library with RDKit:
-      - BRICS recombination of fragments from library drugs
-      - small random edits (halogen swap, methylation, ring-atom swap, OH/NH2 add)
-    Every product is sanitised, de-duplicated and must differ from every
-    library molecule, so results are new structures rather than lookups.
-    """
+class GeneratorBackend:
+    method = METHOD_NAME
 
+    def generate(self, target_id: str, num_molecules: int, **kwargs) -> GenerationResult:  # pragma: no cover
+        raise NotImplementedError
+
+
+class MutationGenerator(GeneratorBackend):
     _EDITS = [
         "[c:1][H]>>[c:1]F",
         "[c:1][H]>>[c:1]Cl",
@@ -72,32 +84,31 @@ class MutationGenerator(LibraryGenerator):
         "[NH2:1]>>[NH:1]C",
     ]
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._library_canon = {self._canon(s) for s in self._base_smiles}
+    def __init__(self, seed_smiles: Optional[Sequence[str]] = None, mw_min: float = 150, mw_max: float = 650) -> None:
+        self.mw_min, self.mw_max = mw_min, mw_max
         self._rxns = [AllChem.ReactionFromSmarts(e) for e in self._EDITS]
-        frags = set()
-        for smi in self._base_smiles:
+        self.set_seeds(seed_smiles or [])
+
+    def set_seeds(self, seed_smiles: Iterable[str]) -> None:
+        self._seeds = [s for s in seed_smiles if chem.is_valid(s)]
+        frags: Set[str] = set()
+        for smi in self._seeds:
             mol = Chem.MolFromSmiles(smi)
             if mol is not None:
                 frags.update(BRICS.BRICSDecompose(mol, minFragmentSize=3))
-        self._frag_mols = [m for m in (Chem.MolFromSmiles(f) for f in frags) if m is not None]
+        self._frag_mols = [x for x in (Chem.MolFromSmiles(f) for f in sorted(frags)) if x is not None]
 
-    @staticmethod
-    def _canon(smi: str):
-        mol = Chem.MolFromSmiles(smi)
-        return Chem.MolToSmiles(mol) if mol is not None else None
-
-    def _mutate(self, smi: str):
+    # ── operators ──────────────────────────────────────────────────────
+    def _mutate(self, smi: str, rng: random.Random) -> Optional[str]:
         mol = Chem.AddHs(Chem.MolFromSmiles(smi))
-        rxn = random.choice(self._rxns)
+        rxn = rng.choice(self._rxns)
         try:
             products = rxn.RunReactants((mol,))
         except Exception:
             return None
         if not products:
             return None
-        prod = random.choice(products)[0]
+        prod = rng.choice(products)[0]
         try:
             prod = Chem.RemoveHs(prod)
             Chem.SanitizeMol(prod)
@@ -105,62 +116,85 @@ class MutationGenerator(LibraryGenerator):
         except Exception:
             return None
 
-    def _recombine(self, count: int) -> List[str]:
+    def _recombine(self, count: int, rng: random.Random) -> List[str]:
         out: List[str] = []
         if len(self._frag_mols) < 2:
             return out
-        seeds = random.sample(self._frag_mols, k=min(len(self._frag_mols), 30))
+        seeds = rng.sample(self._frag_mols, k=min(len(self._frag_mols), 30))
         try:
             for mol in BRICS.BRICSBuild(seeds, maxDepth=1, scrambleReagents=True):
                 try:
                     Chem.SanitizeMol(mol)
                     out.append(Chem.MolToSmiles(mol))
                 except Exception:
-                    continue
+                    out.append("")   # counted as an invalid attempt
                 if len(out) >= count:
                     break
         except Exception:
             pass
         return out
 
-    def generate(self, target_id: str, num_molecules: int) -> List[str]:
-        if num_molecules <= 0:
-            return []
+    # ── public API ─────────────────────────────────────────────────────
+    def generate(self, target_id: str, num_molecules: int, *, seed: Optional[int] = None,
+                 known_inchikeys: Optional[Set[str]] = None, max_attempts_per_molecule: int = 60) -> GenerationResult:
+        stats = GenerationStats(requested=max(num_molecules, 0))
+        params = {"method": METHOD_NAME, "seed": seed, "mw_window": [self.mw_min, self.mw_max],
+                  "num_seed_molecules": len(self._seeds), "num_fragments": len(self._frag_mols),
+                  "max_attempts_per_molecule": max_attempts_per_molecule, "edits": self._EDITS}
+        if num_molecules <= 0 or not self._seeds:
+            return GenerationResult([], stats, params)
+
+        known = set(known_inchikeys or ())
+        seen_keys: Set[str] = set()
         results: List[str] = []
-        seen = set(self._library_canon)
-        attempts = 0
-        while len(results) < num_molecules and attempts < num_molecules * 60:
-            attempts += 1
-            if attempts % 4 == 0:
-                candidates = self._recombine(2)
-            else:
-                candidates = [self._mutate(random.choice(self._base_smiles))]
-            for smi in candidates:
-                if not smi:
-                    continue
-                canon = self._canon(smi)
-                mol = Chem.MolFromSmiles(canon) if canon else None
-                if mol is None or canon in seen:
-                    continue
-                if not (150 <= Descriptors.MolWt(mol) <= 650):
-                    continue
-                seen.add(canon)
-                results.append(canon)
-                if len(results) >= num_molecules:
-                    break
-        # Top up from the library only if mutation could not fill the request.
-        while len(results) < num_molecules:
-            results.append(random.choice(self._base_smiles))
-        return results
+        rng = random.Random(seed)
+        cap = num_molecules * max_attempts_per_molecule
+
+        with _GLOBAL_RANDOM_LOCK:
+            random.seed(seed)
+            while len(results) < num_molecules and stats.attempted < cap:
+                if stats.attempted % 4 == 3:
+                    candidates = self._recombine(2, rng) or [None]
+                else:
+                    candidates = [self._mutate(rng.choice(self._seeds), rng)]
+                for cand in candidates:
+                    stats.attempted += 1
+                    if not cand:
+                        continue
+                    try:
+                        std = chem.standardise(cand)
+                    except chem.InvalidMolecule:
+                        continue
+                    stats.valid += 1
+                    mol = Chem.MolFromSmiles(std.canonical_smiles)
+                    if not (self.mw_min <= Descriptors.MolWt(mol) <= self.mw_max):
+                        stats.filtered_size += 1
+                        continue
+                    if std.inchikey in seen_keys:
+                        continue
+                    seen_keys.add(std.inchikey)
+                    stats.unique += 1
+                    if std.inchikey in known:
+                        continue
+                    stats.novel += 1
+                    results.append(std.canonical_smiles)
+                    if len(results) >= num_molecules:
+                        break
+            stats.exhausted = len(results) < num_molecules
+        stats.returned = len(results)
+        return GenerationResult(results, stats, params)
 
 
-def get_generator() -> GeneratorBackend:
-    """
-    Factory for the current generator backend.
+_generator: Optional[MutationGenerator] = None
 
-    Later we can add a config flag (like for scoring) to switch between:
-      - library-based
-      - TamGen
-      - others
-    """
-    return MutationGenerator()
+
+def get_generator(seed_smiles: Optional[Sequence[str]] = None) -> MutationGenerator:
+    """Generator seeded with the given known compounds (defaults to the bundled reference library)."""
+    global _generator
+    if seed_smiles is not None:
+        gen = MutationGenerator(seed_smiles)
+        return gen
+    if _generator is None:
+        from ..data.candidate_library import CANDIDATE_LIBRARY
+        _generator = MutationGenerator([e["smiles"] for e in CANDIDATE_LIBRARY if e.get("smiles")])
+    return _generator
