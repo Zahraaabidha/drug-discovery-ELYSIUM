@@ -36,7 +36,7 @@ FastAPI · SQLite (SQLAlchemy + Alembic) · ArangoDB · RDKit · DeepPurpose · 
 | Filtering | Backend filters (MW, logP, TPSA, HBD, HBA, rotatable bonds, Lipinski) applied to candidates before scoring; an impossible filter returns an empty result, not unfiltered molecules. The same filters exist in the Library API/UI. |
 | Knowledge graph | ArangoDB `elysium_graph` with targets, reference drugs, compounds with measurements, generated molecules and Reactome pathways. Every edge carries `evidence_type` (`experimental`, `computational_prediction`, `database_annotation`) and provenance. |
 | Reproducible runs | Each run stores seed, request/generator parameters, models and versions, data sources, metrics, KG-sync status and `status` (`completed`, `failed`, `legacy_unverified`). |
-| Evaluation | Generation quality, similarity retrieval (FAISS vs exact; identity under SMILES rewriting), DTI vs measured affinity. Reports store parameters, dataset and limitations. |
+| Evaluation | Generation quality, similarity retrieval (FAISS vs exact; identity under SMILES rewriting), DTI vs measured affinity, plus a time-split DTI benchmark against six or more baselines. Reports store parameters, dataset and limitations. |
 | UI | **Compound Library** (`/library`): search, 15 filters, sorting, paging, compound profile (provenance, measurements vs predictions, similar compounds, notes), compare, similarity search, collections, annotations, data import, evaluation. Plus the existing Discovery, Runs, Graphs, Agent and Analysis pages (Discovery now offers the supported targets, real filters and a seed; Runs statistics are computed from stored runs). |
 
 ## Architecture
@@ -202,8 +202,32 @@ Measured on 2026-11-02 on this project's registry (448 compounds: 49 reference, 
 | Similarity (100 queries, k=10) | FAISS vs exact Tanimoto recall@10 = 0.95 · fingerprint identity retrieval after SMILES rewriting = 1.00 · ChemBERTa identity with an un-canonicalised rewritten query = 0.17 |
 | DTI vs measured affinity (EGFR, 231 compounds, ChEMBL + BindingDB) | Spearman ρ = 0.35 · Pearson r = 0.38 · RMSE 1.43 pKd units vs 1.47 for always predicting the mean |
 
-The DTI result is weak, and probably optimistic because DeepPurpose's pretrained model was trained on BindingDB data
-that overlaps these measurements. Novelty is relative to this registry only. No claim of real-world effectiveness is made.
+The EGFR check above is a quick consistency test only. Novelty is relative to this registry only.
+
+### DTI benchmark on later-published BindingDB data
+
+A time-split benchmark (backend `app/benchmarks`, run on 2026-11-02) trains simple baselines on BindingDB records entered
+up to 2021-05-31 and tests DeepPurpose (zero-shot, as shipped) and the baselines on identical, later-entered compounds that
+have no recorded overlap before the cutoff. Primary benchmark: Ki/Kd for DRD2, CDK2, ESR1 and VEGFR2 (at least 200 training
+and 100 test compounds); IC50 is reported separately. 95% bootstrap intervals in brackets.
+
+| Target (test compounds) | DeepPurpose Spearman | Best trained baseline (Spearman) | DeepPurpose RMSE vs. predicting the mean |
+|---|---|---|---|
+| DRD2 (1,365) | 0.07 [0.02, 0.12] | 0.48 (kNN or random forest) | 1.23 vs 0.95 |
+| CDK2 (700) | 0.22 [0.15, 0.29] | 0.35 (descriptor ridge) | 3.57 vs 1.69 |
+| ESR1 (117) | −0.28 [−0.48, −0.08] | 0.43 (kNN) | 1.67 vs 1.07 |
+| VEGFR2 (112) | 0.19 [0.02, 0.35] | 0.44 (random forest) | 1.88 vs 1.09 |
+
+What this supports: the production DeepPurpose ensemble is significantly worse than the best trained baseline on all four
+primary targets (and on the exploratory EGFR and ABL1) and on all eight IC50 targets; its predicted Kd values have a larger
+error than simply predicting the training mean; and much of its apparent signal goes through molecular size. The
+MPNN_CNN ensemble member returns different values for the same molecule depending on the batch and order it is scored in,
+so predictions are not fully reproducible across batches. Variants without that member did better on DRD2 and CDK2, but they
+were chosen after seeing the results, are not used in production and are not claimed as an improvement.
+
+Whether DeepPurpose's training data overlapped these records is **unverified** (the package does not record it); "no evidence
+of overlap" is not "unseen". Baselines are trained on the target's own data while DeepPurpose is not, test sets are small for
+ESR1 and VEGFR2, and intervals ignore assay clustering. Predicted values should be used only as a weak, uncertain signal.
 
 ## Limitations
 
@@ -214,7 +238,9 @@ production-grade security/scale.
 
 ## Future work
 
-* A leakage-free DTI benchmark (time/scaffold split on data absent from BindingDB), then model comparison/fine-tuning.
+* Resolve the MPNN_CNN batch dependence and ensemble averaging in production scoring, calibrate predictions, and
+  add an applicability-domain warning; then fine-tune or retrain and re-run the same benchmark.
+* Verify DeepPurpose's training data overlap, and extend the benchmark with assay-level splits and more targets.
 * Target-conditioned and learned generators, synthesisability and ADMET models with their own validation.
 * More targets and structure-based features (binding-site constructs, mutants).
 * User accounts and authorisation, PostgreSQL, scalable approximate FAISS indexes.

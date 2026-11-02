@@ -62,3 +62,7 @@ backend/_*.db
 # Markdown: ignore everything except README files
 *.md
 !README.md
+
+# Large external datasets (never commit)
+BindingDB/
+*.tsv
