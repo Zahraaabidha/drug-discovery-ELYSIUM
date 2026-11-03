@@ -3,6 +3,8 @@
 DeepPurpose's oneliner returns None, writes results to disk and needs numpy arrays
 with one row per drug-target pair, so predictions are read back from the pickle it
 writes into a private temp directory. Output is the ensemble-mean predicted Kd in nM.
+The MPNN member runs with a guarded index-offset correction (mpnn_fix); model_version carries its suffix so corrected
+predictions are distinguishable from historical ones (plain DeepPurpose version).
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ from typing import List
 import numpy as np
 
 from .scoring import DTIResult
+from . import mpnn_fix
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +46,9 @@ class DeepPurposeScreeningModel:
         members = sorted(p.name for p in PRETRAINED_DIR.glob("model_*")) if PRETRAINED_DIR.exists() else []
         return {
             "model_name": MODEL_NAME,
-            "model_version": dp_version,
+            "model_version": f"{dp_version}{mpnn_fix.CORRECTED_VERSION_SUFFIX}" if dp_version else None,
+            "base_package_version": dp_version,
+            "corrections": [f"{mpnn_fix.CORRECTION_ID}: MPNN_CNN atom->bond index offset uses bond count (docs/MPNN_BATCH_DEPENDENCE.md)"],
             "members": members,
             "aggregation": "mean",
             "output": "predicted Kd (nM)",
@@ -58,6 +63,7 @@ class DeepPurposeScreeningModel:
                 f"DeepPurpose pretrained models not found at {PRETRAINED_DIR}. "
                 "Set DEEPPURPOSE_MODEL_DIR or download them (see README)."
             )
+        mpnn_fix.ensure_corrected()                 # raises (-> 502) rather than score with the batch-dependent stock MPNN
         from DeepPurpose import oneliner
 
         n = len(smiles_list)

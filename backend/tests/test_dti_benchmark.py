@@ -259,7 +259,8 @@ def test_report_is_stored_in_database_without_touching_other_tables(tmp_path, mo
 
 
 @pytest.mark.slow
-def test_benchmark_ensemble_equals_production_method_on_real_model():
+def test_benchmark_ensemble_equals_production_method_on_real_model(monkeypatch):
+    monkeypatch.setattr(B, "CORRECTED_MPNN", True)       # production runs the corrected MPNN
     """The benchmark must evaluate exactly what the application runs."""
     from app.services.dti_deeppurpose import DeepPurposeScreeningModel
     from app.services.targets import resolve_target

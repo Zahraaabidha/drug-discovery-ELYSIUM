@@ -114,10 +114,18 @@ def baseline_predictions(train: pd.DataFrame, test: pd.DataFrame, feats: Feature
 
 
 # ── DeepPurpose ───────────────────────────────────────────────────────────
+# False reproduces the frozen run (stock, batch-dependent MPNN_CNN). True evaluates what production now runs
+# (app.services.mpnn_fix bond-offset correction). Process-global: it cannot be switched back inside a process.
+CORRECTED_MPNN = False
+
+
 def deeppurpose_members(smiles: Sequence[str], sequence: str, batch: int, members: Optional[Sequence[str]] = None) -> Dict[str, np.ndarray]:
     """Raw pretrained member outputs (pKd scale) for each ensemble member. Uses the production model files."""
     from DeepPurpose import DTI as models
     from ..services.dti_deeppurpose import PRETRAINED_DIR
+    if CORRECTED_MPNN:
+        from ..services import mpnn_fix
+        mpnn_fix.ensure_corrected()
     out: Dict[str, np.ndarray] = {}
     tmp = tempfile.mkdtemp(prefix="elysium_bm_")
     try:
